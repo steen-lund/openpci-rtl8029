@@ -72,3 +72,6 @@ prm-rtl8029.device history
 	 interrupts. It could lead to lost packets in heavy network traffic and
 	 slow CPU.
 
+2.0 (28.09.2024)
+
+  Renamed to openpci-rtl8029.device

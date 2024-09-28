@@ -1,6 +1,9 @@
 /*--------------------------------------------------------------------------*/
-/* Resident header written for prometheus-rtl8029.device                    */
-/* $VER: header.s 1.0 (1.10.2002)                                           */
+/* Resident header written for openpci-rtl8029.device                    */
+/* $VER: header.s 2.0 (28.09.2024)                                          */
+/* 2.0                                                                      */
+/*     - Renamed to openpci-rtl8029.device                                  */
+/*                                                                          */
 /*--------------------------------------------------------------------------*/
 
 #include "rev.h"
@@ -28,7 +31,7 @@ _romtag:    .short      0x4AFC
 
 _tagend:
             .align      2
-_devname:   .string     "prm-rtl8029.device"
+_devname:   .string     "openpci-rtl8029.device"
 
 
 /* CopyB(APTR function_ptr, APTR dest, APTR src, ULONG len) */
