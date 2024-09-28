@@ -1,4 +1,4 @@
-/* Prometheus NE2000 driver. */
+/* OpenPCI NE2000 driver. */
 
 /// includes and defines
 

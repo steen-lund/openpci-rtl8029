@@ -6,7 +6,7 @@
 
 ;language strings
 (set #msg_welcome "Welcome in RTL8029 Ethernet board driver installer.")
-(set #msg_nocard "Sorry, install script did not found any RTL8029 based Ethernet card inserted in your Prometheus. Make sure it is inserted and working and run the script again.")
+(set #msg_nocard "Sorry, install script did not found any RTL8029 based Ethernet card inserted in your system. Make sure it is inserted and working and run the script again.")
 (set #msg_destdir "Select the directory where the driver file will be copied to.")
 (set #msg_desthelp "There is really no reason why you may want to change the default 'DEVS:Networks/' location. But you are an expert, aren't you? So do what you want, but have been warned.")
 (set #msg_copydrv "Copying driver file.")

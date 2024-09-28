@@ -1,4 +1,4 @@
-/* header file for NE2000 driver for Prometheus PCI bridge */
+/* header file for NE2000 driver for OpenCPI Library */
 /* $Id: ne2000.h 0.3 2001/06/09 05:04:52 Krashan Exp Krashan $ */
 
 #include <exec/types.h>
