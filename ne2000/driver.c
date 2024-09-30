@@ -21,23 +21,23 @@
 #include <utility/tagitem.h>
 #include <libraries/openpci.h>
 
-/*#include <faststring.h>*/  /* Probably used for strcpy */
+/*#include <faststring.h>*/ /* Probably used for strcpy */
 
 #include "rev.h"
 #include "ne2000.h"
 // #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
 
-#define OK           0
+#define OK 0
 
-#define TX_BUFFER    0x40
-#define RX_BUFFER    0x46
-#define BUFFER_END   0x80
-#define INTMASK      (INT_RXPACKET | INT_TXPACKET | INT_TXERROR)
+#define TX_BUFFER   0x40
+#define RX_BUFFER   0x46
+#define BUFFER_END  0x80
+#define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR)
 
 /* PCI card ID's */
 
-#define PCI_VENDOR_REALTEK       0x10EC
-#define PCI_DEVICE_RTL8029       0x8029
+#define PCI_VENDOR_REALTEK 0x10EC
+#define PCI_DEVICE_RTL8029 0x8029
 
 // Unit flags.
 
@@ -51,8 +51,8 @@
 
 // Macro for declaring local libraries bases.
 
-#define USE(a) struct Library* a = dd->dd_##a;
-#define USE_U(a) struct Library* a = ud->ud_##a;
+#define USE(a) struct Library *a = dd->dd_##a;
+#define USE_U(a) struct Library *a = ud->ud_##a;
 
 // Debug on/off switch (debug off if commented).
 
@@ -61,10 +61,10 @@
 // Macros for debug messages.
 
 #ifdef PDEBUG
-  #include <proto/debug.h>
+#include <proto/debug.h>
 
-  #define USE_D(a) struct Library* a = dd->dd_##a;
-  #define USE_UD(a) struct Library* a = ud->ud_##a;
+#define USE_D(a) struct Library* a = dd->dd_##a;
+#define USE_UD(a) struct Library* a = ud->ud_##a;
 /*  #define DBG(a) KPrintf(dd->debug, a "\n")
   #define DBG_U(a) KPrintf(ud->debug, a "\n")
   #define DBG_T(a) KPrintf(ud->tdebug, a "\n")
@@ -75,103 +75,102 @@
   #define DBG2_U(a,b,c) KPrintf(ud->debug, a "\n",(LONG)b,(LONG)c)
   #define DBG2_T(a,b,c) KPrintf(ud->tdebug, a "\n",(LONG)b,(LONG)c)*/
 
-  #define DBG(a) KPrintF(a "\n")
-  #define DBG_U(a) KPrintF(a "\n")
-  #define DBG_T(a) KPrintF(a "\n")
-  #define DBG1(a,b) KPrintF(a "\n",(LONG)b)
-  #define DBG1_U(a,b) KPrintF(a "\n",(LONG)b)
-  #define DBG1_T(a,b) KPrintF(a "\n",(LONG)b)
-  #define DBG2(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
-  #define DBG2_U(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
-  #define DBG2_T(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
+#define DBG(a) KPrintF(a "\n")
+#define DBG_U(a) KPrintF(a "\n")
+#define DBG_T(a) KPrintF(a "\n")
+#define DBG1(a, b) KPrintF(a "\n", (LONG)b)
+#define DBG1_U(a, b) KPrintF(a "\n", (LONG)b)
+#define DBG1_T(a, b) KPrintF(a "\n", (LONG)b)
+#define DBG2(a, b, c) KPrintF(a "\n", (LONG)b, (LONG)c)
+#define DBG2_U(a, b, c) KPrintF(a "\n", (LONG)b, (LONG)c)
+#define DBG2_T(a, b, c) KPrintF(a "\n", (LONG)b, (LONG)c)
 
 #else
-  #define USE_D(a)
-  #define USE_UD(a)
-  #define DBG(a)
-  #define DBG_U(a)
-  #define DBG_T(a)
-  #define DBG1(a,b)
-  #define DBG1_U(a,b)
-  #define DBG1_T(a,b)
-  #define DBG2(a,b,c)
-  #define DBG2_U(a,b,c)
-  #define DBG2_T(a,b,c)
+#define USE_D(a)
+#define USE_UD(a)
+#define DBG(a)
+#define DBG_U(a)
+#define DBG_T(a)
+#define DBG1(a, b)
+#define DBG1_U(a, b)
+#define DBG1_T(a, b)
+#define DBG2(a, b, c)
+#define DBG2_U(a, b, c)
+#define DBG2_T(a, b, c)
 #endif
 
 // New Style Device support
 
-#define NSCMD_DEVICEQUERY   0x4000
+#define NSCMD_DEVICEQUERY 0x4000
 
 struct NSDeviceQueryResult
- {
-  ULONG   DevQueryFormat;         /* this is type 0               */
-  ULONG   SizeAvailable;          /* bytes available              */
-  UWORD   DeviceType;             /* what the device does         */
-  UWORD   DeviceSubType;          /* depends on the main type     */
-  UWORD   *SupportedCommands;     /* 0 terminated list of cmd's   */
- };
+{
+    ULONG DevQueryFormat;     /* this is type 0               */
+    ULONG SizeAvailable;      /* bytes available              */
+    UWORD DeviceType;         /* what the device does         */
+    UWORD DeviceSubType;      /* depends on the main type     */
+    UWORD *SupportedCommands; /* 0 terminated list of cmd's   */
+};
 
-#define NSDEVTYPE_SANA2       7   /* A >=SANA2R2 networking device */
+#define NSDEVTYPE_SANA2 7 /* A >=SANA2R2 networking device */
 
 ///
 /// device structures
 
 struct DevData
-  {
-    struct Library           dd_Lib;
-    APTR                     dd_SegList;
-    struct Library          *dd_SysBase;
-    struct Library          *dd_OpenPciBase;
-    struct Library          *dd_UtilityBase;
-    struct Library          *dd_DOSBase;
-    struct Library          *dd_TimerBase;
-    struct UnitData         *dd_Units[4];
-    struct timerequest       dd_Treq;
+{
+    struct Library dd_Lib;
+    APTR dd_SegList;
+    struct Library *dd_SysBase;
+    struct Library *dd_OpenPciBase;
+    struct Library *dd_UtilityBase;
+    struct Library *dd_DOSBase;
+    struct Library *dd_TimerBase;
+    struct UnitData *dd_Units[4];
+    struct timerequest dd_Treq;
 
-
-    #ifdef PDEBUG
-    BPTR                debug;
-    UBYTE               dpath[128];
-    #endif
-  };
+#ifdef PDEBUG
+    BPTR debug;
+    UBYTE dpath[128];
+#endif
+};
 
 struct UnitData
-  {
-    struct Message           ud_Message;
-    volatile struct Ne2000  *ud_Hardware;
-    struct Library          *ud_SysBase;
-    struct Library          *ud_DOSBase;
-    struct Library          *ud_TimerBase;
-    struct Interrupt        *ud_Interrupt;
-    struct Task             *ud_Task;
-    struct MsgPort          *ud_TaskPort;
-    struct MsgPort          *ud_LifeTime;
-    struct MinList           ud_RxQueue;
-    struct MinList           ud_TxQueue;
-    struct IOSana2Req       *ud_PendingWrite;
-    ULONG                    ud_OpenCnt;
-    ULONG                    ud_GoWriteMask;
-    UWORD                    ud_RxBuffer[768];
-    UBYTE                    ud_Name[27];
-    UBYTE                    ud_EtherAddress[6];
-    UBYTE                    ud_SoftAddress[6];
-    struct Sana2DeviceStats  ud_DevStats;
-    UBYTE                    ud_Flags;
-    UBYTE                    ud_NextPage;
-    BYTE                     ud_GoWriteBit;
-    UBYTE                    pad;
-    #ifdef PDEBUG
-    BPTR                     debug;
-    BPTR                     tdebug;
-    #endif
-  };
+{
+    struct Message ud_Message;
+    volatile struct Ne2000 *ud_Hardware;
+    struct Library *ud_SysBase;
+    struct Library *ud_DOSBase;
+    struct Library *ud_TimerBase;
+    struct Interrupt *ud_Interrupt;
+    struct Task *ud_Task;
+    struct MsgPort *ud_TaskPort;
+    struct MsgPort *ud_LifeTime;
+    struct MinList ud_RxQueue;
+    struct MinList ud_TxQueue;
+    struct IOSana2Req *ud_PendingWrite;
+    ULONG ud_OpenCnt;
+    ULONG ud_GoWriteMask;
+    UWORD ud_RxBuffer[768];
+    UBYTE ud_Name[27];
+    UBYTE ud_EtherAddress[6];
+    UBYTE ud_SoftAddress[6];
+    struct Sana2DeviceStats ud_DevStats;
+    UBYTE ud_Flags;
+    UBYTE ud_NextPage;
+    BYTE ud_GoWriteBit;
+    UBYTE pad;
+#ifdef PDEBUG
+    BPTR debug;
+    BPTR tdebug;
+#endif
+};
 
 struct BuffFunctions
-  {
+{
     APTR bf_CopyTo;
     APTR bf_CopyFrom;
-  };
+};
 
 ///
 /// prototypes
@@ -180,7 +179,7 @@ extern LONG CopyB(APTR func reg(a2), APTR to reg(a0), APTR from reg(a1), ULONG n
 
 struct DevData *DevInit(void *seglist reg(a0), struct Library *sysb reg(a6));
 LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d1),
-  struct DevData *dd reg(a6));
+             struct DevData *dd reg(a6));
 APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
 APTR DevExpunge(struct DevData *dd reg(a6));
 LONG DevReserved(void);
@@ -207,9 +206,9 @@ void S2Offline(struct UnitData *ud, struct IOSana2Req *req);
 void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req);
 
 void HardwareReset(struct UnitData *ud);
-void HardwareInit (struct UnitData *ud);
+void HardwareInit(struct UnitData *ud);
 volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit);
-void GoOnline (struct UnitData *ud);
+void GoOnline(struct UnitData *ud);
 void GoOffline(struct UnitData *ud);
 void GetHwAddress(struct UnitData *ud);
 void WriteHwAddress(struct UnitData *ud);
@@ -226,42 +225,40 @@ extern struct Resident romtag;
 const UBYTE IdString[] = DEV_IDSTRING;
 
 const void *FuncTable[] =
-  {
-    DevOpen,
-    DevClose,
-    DevExpunge,
-    DevReserved,
-    DevBeginIO,
-    DevAbortIO,
-    (APTR)-1
-  };
+    {
+        DevOpen,
+        DevClose,
+        DevExpunge,
+        DevReserved,
+        DevBeginIO,
+        DevAbortIO,
+        (APTR)-1};
 
 UWORD NSDSupported[] =
-  {
-    CMD_READ,
-    CMD_WRITE,
-    CMD_FLUSH,
-    S2_DEVICEQUERY,
-    S2_GETSTATIONADDRESS,
-    S2_CONFIGINTERFACE,
-    S2_BROADCAST,
-    S2_GETGLOBALSTATS,
-    S2_ONLINE,
-    S2_OFFLINE,
-    NSCMD_DEVICEQUERY,
-    0
-  };
+    {
+        CMD_READ,
+        CMD_WRITE,
+        CMD_FLUSH,
+        S2_DEVICEQUERY,
+        S2_GETSTATIONADDRESS,
+        S2_CONFIGINTERFACE,
+        S2_BROADCAST,
+        S2_GETGLOBALSTATS,
+        S2_ONLINE,
+        S2_OFFLINE,
+        NSCMD_DEVICEQUERY,
+        0};
 
 ///
 
 /* Good enough */
-unsigned char* strcpy(unsigned char *dest, const unsigned char *src)
+unsigned char *strcpy(unsigned char *dest, const unsigned char *src)
 {
-  unsigned char* d = dest;
-  while (*src)
-    *dest++ = *src++;
-  *dest = 0;
-  return d;
+    unsigned char *d = dest;
+    while (*src)
+        *dest++ = *src++;
+    *dest = 0;
+    return d;
 }
 
 /// DevInit()
@@ -269,12 +266,12 @@ unsigned char* strcpy(unsigned char *dest, const unsigned char *src)
 // libraries used by the device. Returns device base or NULL if init failed.
 
 struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
-  {
+{
     struct DevData *dd;
     struct Library *SysBase = sysb;
 
-    if (dd = (struct DevData*)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0))
-      {
+    if (dd = (struct DevData *)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0))
+    {
         dd->dd_Lib.lib_Node.ln_Type = NT_DEVICE;
         dd->dd_Lib.lib_Node.ln_Name = romtag.rt_Name;
         dd->dd_Lib.lib_Flags = LIBF_CHANGED | LIBF_SUMUSED;
@@ -285,213 +282,232 @@ struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
         dd->dd_SegList = seglist;
         dd->dd_SysBase = SysBase;
         if (OpenDeviceLibraries(dd))
-          {
+        {
             USE_D(DOSBase)
             WORD i;
 
-            for (i = 0; i < 4; i++) dd->dd_Units[i] = NULL;
+            for (i = 0; i < 4; i++)
+                dd->dd_Units[i] = NULL;
 
-            #ifdef PDEBUG
-            /*strcpy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
-            /*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
-            /*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
-            #endif
+#ifdef PDEBUG
+/*strcpy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
+/*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
+/*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
+#endif
 
             DBG1("Device initialized, base at $%08lx.", dd);
-            AddDevice((struct Device*)dd);
+            AddDevice((struct Device *)dd);
             return dd;
-          }
+        }
         CloseDeviceLibraries(dd);
-      }
+    }
     return NULL;
-  }
+}
 
 ///
 /// DevOpen()
 
 LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d1),
-  struct DevData *dd reg(a6))
-  {
+             struct DevData *dd reg(a6))
+{
     USE(SysBase)
     USE_D(DOSBase)
     struct UnitData *ud;
 
     DBG("DevOpen() called.");
-    dd->dd_Lib.lib_OpenCnt++;     // expunge protection
+    dd->dd_Lib.lib_OpenCnt++; // expunge protection
 
     if ((unit >= 0) && (unit <= 3))
-      {
+    {
         if (ud = OpenUnit(dd, unit, flags))
-          {
+        {
             req->ios2_Req.io_Error = 0;
             req->ios2_Req.io_Message.mn_Node.ln_Type = NT_REPLYMSG;
-            req->ios2_Req.io_Device = (struct Device*)dd;
-            req->ios2_Req.io_Unit = (struct Unit*)ud;
+            req->ios2_Req.io_Device = (struct Device *)dd;
+            req->ios2_Req.io_Unit = (struct Unit *)ud;
             if (PrepareCookie(req, dd))
-              {
+            {
                 dd->dd_Lib.lib_Flags &= ~LIBF_DELEXP;
                 DBG("DevOpen(): device opened successfully.");
                 return 0;
-              }
+            }
             DBG("PrepareCookie() failed.");
             CloseUnit(dd, ud);
-          }
-      }
+        }
+    }
     req->ios2_Req.io_Error = IOERR_OPENFAIL;
-    req->ios2_Req.io_Device = (struct Device*)-1;
-    req->ios2_Req.io_Unit = (struct Unit*)-1;
-    dd->dd_Lib.lib_OpenCnt--;                       /* end of expunge protection */
+    req->ios2_Req.io_Device = (struct Device *)-1;
+    req->ios2_Req.io_Unit = (struct Unit *)-1;
+    dd->dd_Lib.lib_OpenCnt--; /* end of expunge protection */
     return IOERR_OPENFAIL;
-  }
+}
 
 ///
 /// DevClose()
 
 APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
-  {
+{
     USE(SysBase)
     USE_D(DOSBase)
     WORD unit;
 
-    CloseUnit(dd, (struct UnitData*)req->ios2_Req.io_Unit);
+    CloseUnit(dd, (struct UnitData *)req->ios2_Req.io_Unit);
 
-    if (req->ios2_BufferManagement) FreeMem(req->ios2_BufferManagement,
-      sizeof(struct BuffFunctions));
+    if (req->ios2_BufferManagement)
+        FreeMem(req->ios2_BufferManagement,
+                sizeof(struct BuffFunctions));
 
     if (--dd->dd_Lib.lib_OpenCnt == 0)
-      {
+    {
         DBG("DevClose(): open counter reached 0.");
-        if (dd->dd_Lib.lib_Flags & LIBF_DELEXP) return (DevExpunge(dd));
-      }
+        if (dd->dd_Lib.lib_Flags & LIBF_DELEXP)
+            return (DevExpunge(dd));
+    }
     return 0;
-  }
+}
 
 ///
 /// DevExpunge()
 
-APTR DevExpunge (struct DevData *dd reg(a6))
-  {
+APTR DevExpunge(struct DevData *dd reg(a6))
+{
     USE(SysBase)
     USE_D(DOSBase)
     APTR seglist;
 
     if (dd->dd_Lib.lib_OpenCnt)
-      {
+    {
         dd->dd_Lib.lib_Flags |= LIBF_DELEXP;
         return 0;
-      }
-    Remove((struct Node*)dd);
+    }
+    Remove((struct Node *)dd);
     CloseDeviceLibraries(dd);
     seglist = dd->dd_SegList;
     FreeMem((APTR)dd - dd->dd_Lib.lib_NegSize, (LONG)dd->dd_Lib.lib_PosSize + (LONG)dd->dd_Lib.lib_NegSize);
     DBG("DevExpunge(): expunged.");
     return seglist;
-  }
+}
 
 ///
 /// DevReserved()
 
-LONG DevReserved (void)
-  {
+LONG DevReserved(void)
+{
     return 0;
-  }
+}
 
 ///
 /// DevBeginIo()
 
 void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
-  {
+{
     USE(SysBase)
     USE_D(DOSBase)
-    struct UnitData *ud = (struct UnitData*)req->ios2_Req.io_Unit;
+    struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     WORD i;
 
-    switch(req->ios2_Req.io_Command)
-      {
-        case NSCMD_DEVICEQUERY:       CmdNSDQuery(ud, (struct IOStdReq*)req);   break;
-        case S2_DEVICEQUERY:          S2DeviceQuery(ud, req);                   break;
-        case S2_GETSTATIONADDRESS:    S2GetStationAddress(ud, req);             break;
-        case S2_CONFIGINTERFACE:      S2ConfigInterface(ud, req);               break;
-        case S2_ONLINE:               S2Online(ud, req);                        break;
-        case S2_OFFLINE:              S2Offline(ud, req);                       break;
-        case S2_GETGLOBALSTATS:       S2GetGlobalStats(ud, req);                break;
-
-        case CMD_READ:
-          DBG1("CMD_READ [$%08lx].", (LONG)req);
-          req->ios2_Req.io_Flags &= ~IOF_QUICK;
-          PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
+    switch (req->ios2_Req.io_Command)
+    {
+    case NSCMD_DEVICEQUERY:
+        CmdNSDQuery(ud, (struct IOStdReq *)req);
+        break;
+    case S2_DEVICEQUERY:
+        S2DeviceQuery(ud, req);
+        break;
+    case S2_GETSTATIONADDRESS:
+        S2GetStationAddress(ud, req);
+        break;
+    case S2_CONFIGINTERFACE:
+        S2ConfigInterface(ud, req);
+        break;
+    case S2_ONLINE:
+        S2Online(ud, req);
+        break;
+    case S2_OFFLINE:
+        S2Offline(ud, req);
+        break;
+    case S2_GETGLOBALSTATS:
+        S2GetGlobalStats(ud, req);
         break;
 
-        case S2_BROADCAST:
-          for (i = 0; i < 6; i++) req->ios2_DstAddr[i] = 0xFF;
-        case CMD_WRITE:
-          DBG1("CMD_WRITE [$%08lx].", (LONG)req);
-          req->ios2_Req.io_Flags &= ~IOF_QUICK;
-          PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
+    case CMD_READ:
+        DBG1("CMD_READ [$%08lx].", (LONG)req);
+        req->ios2_Req.io_Flags &= ~IOF_QUICK;
+        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
 
-        case CMD_FLUSH:
-          DBG1("CMD_FLUSH [$%08lx].", (LONG)req);
-          req->ios2_Req.io_Flags &= ~IOF_QUICK;
-          PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
+    case S2_BROADCAST:
+        for (i = 0; i < 6; i++)
+            req->ios2_DstAddr[i] = 0xFF;
+    case CMD_WRITE:
+        DBG1("CMD_WRITE [$%08lx].", (LONG)req);
+        req->ios2_Req.io_Flags &= ~IOF_QUICK;
+        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
 
-        default:
-          DBG1("DevBeginIo(): unknown command code %ld.", req->ios2_Req.io_Command);
-          IoDone(ud, req, IOERR_NOCMD, S2WERR_GENERIC_ERROR);
+    case CMD_FLUSH:
+        DBG1("CMD_FLUSH [$%08lx].", (LONG)req);
+        req->ios2_Req.io_Flags &= ~IOF_QUICK;
+        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
-      }
+
+    default:
+        DBG1("DevBeginIo(): unknown command code %ld.", req->ios2_Req.io_Command);
+        IoDone(ud, req, IOERR_NOCMD, S2WERR_GENERIC_ERROR);
+        break;
+    }
     return;
-  }
+}
 
 ///
 /// DevAbortIo()
 
 ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
-  {
+{
     USE(SysBase)
     USE_D(DOSBase)
     LONG ret = 0;
-    struct UnitData *ud = (struct UnitData*)req->ios2_Req.io_Unit;
+    struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     struct MinList *list;
     struct MinNode *node;
 
     DBG1("DevAbortIo: aborting $%08lx.", req);
     switch (req->ios2_Req.io_Command)
-      {
-        case CMD_READ:
-          list = &ud->ud_RxQueue;
+    {
+    case CMD_READ:
+        list = &ud->ud_RxQueue;
         break;
 
-        case CMD_WRITE:
-        case S2_BROADCAST:
-          list = &ud->ud_TxQueue;
+    case CMD_WRITE:
+    case S2_BROADCAST:
+        list = &ud->ud_TxQueue;
         break;
 
-        default:
-          list = NULL;
-      }
+    default:
+        list = NULL;
+    }
     if (list)
-      {
+    {
         Disable();
         for (node = list->mlh_Head; node->mln_Succ; node = node->mln_Succ)
-          {
-            if (node == (struct MinNode*)req)
-              {
-                if (((struct Message*)node)->mn_Node.ln_Type != NT_REPLYMSG)
-                  {
-                    Remove((struct Node*)node);
+        {
+            if (node == (struct MinNode *)req)
+            {
+                if (((struct Message *)node)->mn_Node.ln_Type != NT_REPLYMSG)
+                {
+                    Remove((struct Node *)node);
                     req->ios2_Req.io_Error = IOERR_ABORTED;
-                    ReplyMsg((struct Message*)node);
+                    ReplyMsg((struct Message *)node);
                     ret = 0;
-                  }
-              }
-          }
+                }
+            }
+        }
         Enable();
-      }
-    else ret = IOERR_NOCMD;
+    }
+    else
+        ret = IOERR_NOCMD;
     return ret;
-  }
+}
 
 ///
 
@@ -501,122 +517,132 @@ ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 // Function ends IORequest with given error codes. Requests with IOF_QUICK cleared will be ReplyMsg()-ed.
 
 void IoDone(struct UnitData *ud, struct IOSana2Req *req, LONG err, LONG werr)
-  {
+{
     USE_U(SysBase)
 
     req->ios2_Req.io_Error = err;
     req->ios2_WireError = werr;
-    if (!(req->ios2_Req.io_Flags & IOF_QUICK)) ReplyMsg(&req->ios2_Req.io_Message);
+    if (!(req->ios2_Req.io_Flags & IOF_QUICK))
+        ReplyMsg(&req->ios2_Req.io_Message);
     return;
-  }
+}
 
 ///
 /// OpenDeviceLibraries(struct DevData *dd)
 
 LONG OpenDeviceLibraries(struct DevData *dd)
-  {
+{
     USE(SysBase)
 
-    if (!(dd->dd_UtilityBase = OpenLibrary("utility.library", 39))) return FALSE;
-    if (!(dd->dd_OpenPciBase = OpenLibrary("openpci.library", 5))) return FALSE;
-    if (!(dd->dd_DOSBase = OpenLibrary("dos.library", 38))) return FALSE;
-    if (OpenDevice ("timer.device", UNIT_MICROHZ, (struct IORequest*)&dd->dd_Treq, 0) == 0)
-      {
-        dd->dd_TimerBase = (struct Library*)dd->dd_Treq.tr_node.io_Device;
-      }
+    if (!(dd->dd_UtilityBase = OpenLibrary("utility.library", 39)))
+        return FALSE;
+    if (!(dd->dd_OpenPciBase = OpenLibrary("openpci.library", 5)))
+        return FALSE;
+    if (!(dd->dd_DOSBase = OpenLibrary("dos.library", 38)))
+        return FALSE;
+    if (OpenDevice("timer.device", UNIT_MICROHZ, (struct IORequest *)&dd->dd_Treq, 0) == 0)
+    {
+        dd->dd_TimerBase = (struct Library *)dd->dd_Treq.tr_node.io_Device;
+    }
 
     return TRUE;
-  }
+}
 
 ///
 /// CloseDeviceLibraries(struct DevData *dd)
 
 void CloseDeviceLibraries(struct DevData *dd)
-  {
+{
     USE(SysBase)
 
-    if (dd->dd_DOSBase) CloseLibrary(dd->dd_DOSBase);
-    if (dd->dd_OpenPciBase) CloseLibrary(dd->dd_OpenPciBase);
-    if (dd->dd_UtilityBase) CloseLibrary(dd->dd_UtilityBase);
-    if (dd->dd_TimerBase) CloseDevice ((struct IORequest*)&dd->dd_Treq);
-  }
+    if (dd->dd_DOSBase)
+        CloseLibrary(dd->dd_DOSBase);
+    if (dd->dd_OpenPciBase)
+        CloseLibrary(dd->dd_OpenPciBase);
+    if (dd->dd_UtilityBase)
+        CloseLibrary(dd->dd_UtilityBase);
+    if (dd->dd_TimerBase)
+        CloseDevice((struct IORequest *)&dd->dd_Treq);
+}
 
 ///
 /// PrepareCookie(struct IOSana2Req *req, struct DevData *dd)
 
 LONG PrepareCookie(struct IOSana2Req *req, struct DevData *dd)
-  {
+{
     USE(SysBase)
     USE(UtilityBase)
     USE_D(DOSBase)
 
     if (req->ios2_BufferManagement)
-      {
+    {
         struct BuffFunctions *bfun;
 
         if (bfun = AllocMem(sizeof(struct BuffFunctions), MEMF_ANY))
-          {
+        {
             bfun->bf_CopyFrom = (APTR)GetTagData(S2_CopyFromBuff, NULL,
-              (struct TagItem*)req->ios2_BufferManagement);
+                                                 (struct TagItem *)req->ios2_BufferManagement);
             bfun->bf_CopyTo = (APTR)GetTagData(S2_CopyToBuff, NULL,
-              (struct TagItem*)req->ios2_BufferManagement);
+                                               (struct TagItem *)req->ios2_BufferManagement);
 
             if (bfun->bf_CopyFrom && bfun->bf_CopyTo)
-              {
+            {
                 DBG1("CopyFrom [$%08lx].", bfun->bf_CopyFrom);
                 req->ios2_BufferManagement = bfun;
                 return TRUE;
-              }
-            else FreeMem(bfun, sizeof(struct BuffFunctions));
-          }
-      }
+            }
+            else
+                FreeMem(bfun, sizeof(struct BuffFunctions));
+        }
+    }
     return FALSE;
-  }
+}
 
 ///
 /// RunTask(struct DevData *dd, struct UnitData *ud)
 
 LONG RunTask(struct DevData *dd, struct UnitData *ud)
-  {
+{
     USE(SysBase)
     USE(DOSBase)
 
     DBG("RunTask() called.");
 
-    if(ud->ud_LifeTime = CreateMsgPort())
-      {
-        if (ud->ud_Task = (struct Task*)CreateNewProcTags(
-          NP_Entry, (LONG)UnitTask,
-          NP_Name, (LONG)ud->ud_Name,
-          NP_Priority, 6,
-        TAG_END))
-          {
+    if (ud->ud_LifeTime = CreateMsgPort())
+    {
+        if (ud->ud_Task = (struct Task *)CreateNewProcTags(
+                NP_Entry, (LONG)UnitTask,
+                NP_Name, (LONG)ud->ud_Name,
+                NP_Priority, 6,
+                TAG_END))
+        {
             WORD i;
 
             DBG1("Task [$%08lx] started.", ud->ud_Task);
             for (i = 0; i < 50; i++)
-              {
-                if (!(ud->ud_TaskPort = FindPort(ud->ud_Name))) Delay(1);
+            {
+                if (!(ud->ud_TaskPort = FindPort(ud->ud_Name)))
+                    Delay(1);
                 else
-                  {
+                {
                     DBG("Task port detected.");
                     ud->ud_Message.mn_Node.ln_Type = NT_MESSAGE;
                     ud->ud_Message.mn_Length = sizeof(struct UnitData);
                     ud->ud_Message.mn_ReplyPort = ud->ud_LifeTime;
                     PutMsg(ud->ud_TaskPort, &ud->ud_Message);
                     return TRUE;
-                  }
-              }
-          }
-      }
+                }
+            }
+        }
+    }
     return FALSE;
-  }
+}
 
 ///
 /// KillTask(struct DevData *dd, struct UnitData *ud)
 
 void KillTask(struct DevData *dd, struct UnitData *ud)
-  {
+{
     USE(SysBase)
     USE_D(DOSBase)
 
@@ -626,26 +652,26 @@ void KillTask(struct DevData *dd, struct UnitData *ud)
     DeleteMsgPort(ud->ud_LifeTime);
     DBG("Task dead.");
     return;
-  }
+}
 
 ///
 /// ClearGlobalStats()
 
 void ClearGlobalStats(struct UnitData *ud)
-  {
+{
     USE_U(TimerBase)
 
     ud->ud_DevStats.PacketsReceived = 0;
     ud->ud_DevStats.PacketsSent = 0;
     GetSysTime(&ud->ud_DevStats.LastStart);
     return;
-  }
+}
 
 ///
 /// OpenUnit()
 
 struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
-  {
+{
     USE_D(DOSBase)
     struct UnitData *ud = dd->dd_Units[unit];
 
@@ -653,48 +679,53 @@ struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
 
     /* Eliminate 'promiscuous without exclusive' flag combination. */
 
-    if ((flags & SANA2OPF_PROM) && !(flags & SANA2OPF_MINE)) return NULL;
+    if ((flags & SANA2OPF_PROM) && !(flags & SANA2OPF_MINE))
+        return NULL;
 
     /* Initialize unit if opened first time. */
 
     if (!ud)
-      {
-        if (!(ud = InitializeUnit(dd, unit))) return NULL;
-      }
+    {
+        if (!(ud = InitializeUnit(dd, unit)))
+            return NULL;
+    }
 
     /* Check exclusive flag - reject if already opened by someone else. */
 
-    if ((flags & SANA2OPF_MINE) && ud->ud_OpenCnt) return NULL;
+    if ((flags & SANA2OPF_MINE) && ud->ud_OpenCnt)
+        return NULL;
 
     /* Set promiscuous flag if requested - we konw here MINE was requested too, and noone else has opened */
     /* the unit. So we can just set it if requested. */
 
-    if (flags & SANA2OPF_PROM) ud->ud_Flags |= UF_PROMISCUOUS;
+    if (flags & SANA2OPF_PROM)
+        ud->ud_Flags |= UF_PROMISCUOUS;
 
     /* OK, increment open counter and exit with success. */
 
     ud->ud_OpenCnt++;
     DBG2("%s opened [%ld].", ud->ud_Name, ud->ud_OpenCnt);
     return ud;
-  }
+}
 
 ///
 /// CloseUnit()
 
 void CloseUnit(struct DevData *dd, struct UnitData *ud)
-  {
+{
     USE_D(DOSBase)
 
     DBG1("%s closed.", ud->ud_Name);
-    if (!(--ud->ud_OpenCnt)) ExpungeUnit(dd, ud);
+    if (!(--ud->ud_OpenCnt))
+        ExpungeUnit(dd, ud);
     return;
-  }
+}
 
 ///
 /// InitializeUnit()
 
 struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
-  {
+{
     USE(SysBase)
     USE(DOSBase)
     struct UnitData *ud;
@@ -702,65 +733,67 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 
     DBG("InitializeUnit() called.");
     if (ud = AllocMem(sizeof(struct UnitData), MEMF_PUBLIC | MEMF_CLEAR))
-      {
+    {
         if (ud->ud_Hardware = FindHardware(dd, unit))
-          {
-            #ifdef PDEBUG
+        {
+#ifdef PDEBUG
             ud->debug = dd->debug;
-            #endif
+#endif
 
             for (i = 5; i >= 0; i--)
-              {
+            {
                 ud->ud_SoftAddress[i] = 0x00;
                 ud->ud_EtherAddress[i] = 0x00;
-              }
+            }
             ud->ud_SysBase = dd->dd_SysBase;
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
             strcpy(ud->ud_Name, "openpci-rtl8029.device (x)");
-            ud->ud_Name[20] = '0' + unit;
-            ud->ud_RxQueue.mlh_Head = (struct MinNode*)&ud->ud_RxQueue.mlh_Tail;
+            ud->ud_Name[24] = '0' + unit;
+            ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
-            ud->ud_RxQueue.mlh_TailPred = (struct MinNode*)&ud->ud_RxQueue.mlh_Head;
-            ud->ud_TxQueue.mlh_Head = (struct MinNode*)&ud->ud_TxQueue.mlh_Tail;
+            ud->ud_RxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_RxQueue.mlh_Head;
+            ud->ud_TxQueue.mlh_Head = (struct MinNode *)&ud->ud_TxQueue.mlh_Tail;
             ud->ud_TxQueue.mlh_Tail = NULL;
-            ud->ud_TxQueue.mlh_TailPred = (struct MinNode*)&ud->ud_TxQueue.mlh_Head;
+            ud->ud_TxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_TxQueue.mlh_Head;
             ud->ud_NextPage = RX_BUFFER;
             HardwareReset(ud);
             HardwareInit(ud);
             GetHwAddress(ud);
             if (RunTask(dd, ud))
-              {
+            {
                 dd->dd_Units[unit] = ud;
                 DBG1("%s initialized.", (LONG)ud->ud_Name);
                 return ud;
-              }
-          }
-      }
+            }
+        }
+    }
     ExpungeUnit(dd, ud);
     return NULL;
-  }
+}
 
 ///
 /// ExpungeUnit()
 
 void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
-  {
+{
     USE(SysBase)
     USE_D(DOSBase)
     WORD unit;
 
     if (ud)
-      {
-       unit = ud->ud_Name[20] - '0';
-       if (ud->ud_Flags & UF_ONLINE) GoOffline(ud);
-       if (ud->ud_Task) KillTask(dd, ud);
-       FreeMem(ud, sizeof(struct UnitData));
-       dd->dd_Units[unit] = NULL;
-       DBG1("%s expunged.", ud->ud_Name);
-      }
+    {
+        unit = ud->ud_Name[24] - '0';
+        if (ud->ud_Flags & UF_ONLINE)
+            GoOffline(ud);
+        if (ud->ud_Task)
+            KillTask(dd, ud);
+        FreeMem(ud, sizeof(struct UnitData));
+        dd->dd_Units[unit] = NULL;
+        DBG1("%s expunged.", ud->ud_Name);
+    }
     return;
-  }
+}
 
 ///
 
@@ -769,15 +802,15 @@ void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
 /// S2DeviceQuery()
 
 void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_UD(DOSBase)
     struct Sana2DeviceQuery *query = req->ios2_StatData;
 
     DBG_U("S2_DEVICEQUERY.");
     if (query)
-      {
+    {
         if (query->SizeAvailable >= sizeof(struct Sana2DeviceQuery))
-          {
+        {
             query->SizeSupplied = sizeof(struct Sana2DeviceQuery);
             query->DevQueryFormat = 0;
             query->DeviceLevel = 0;
@@ -786,18 +819,24 @@ void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
             query->BPS = 10000000;
             query->HardwareType = S2WireType_Ethernet;
             IoDone(ud, req, OK, OK);
-          }
-        else IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_GENERIC_ERROR);
-      }
-    else IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
+        }
+        else
+        {
+            IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_GENERIC_ERROR);
+        }
+    }
+    else
+    {
+        IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
+    }
     return;
-  }
+}
 
 ///
 /// S2GetStationAddress()
 
 void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
 
@@ -806,112 +845,115 @@ void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
     CopyMem(ud->ud_EtherAddress, req->ios2_DstAddr, 6);
     IoDone(ud, req, OK, OK);
     return;
-  }
+}
 
 ///
 /// S2Online()
 
 void S2Online(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_UD(DOSBase)
 
     DBG_U("S2_ONLINE.");
     ClearGlobalStats(ud);
     if (!(ud->ud_Flags & UF_ONLINE))
-      {
+    {
         GoOnline(ud);
         ud->ud_Flags |= UF_ONLINE;
         IoDone(ud, req, OK, OK);
-      }
-    else IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_ONLINE);
+    }
+    else
+        IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_ONLINE);
     return;
-  }
+}
 
 ///
 /// S2ConfigInterface()
 
 BOOL address_has_all(UBYTE *addr, UBYTE num)
-  {
+{
     WORD i;
 
     for (i = 5; i >= 0; i--)
-      {
-        if (addr[i] != num) return FALSE;
-      }
+    {
+        if (addr[i] != num)
+            return FALSE;
+    }
     return TRUE;
-  }
-
+}
 
 void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
 
     DBG_U("S2_CONFIGINTERFACE.");
     ClearGlobalStats(ud);
     if (ud->ud_Flags & UF_CONFIGURED)
-      {
+    {
         IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_IS_CONFIGURED);
-      }
+    }
     else if (address_has_all(req->ios2_SrcAddr, 0x00) ||
-      address_has_all(req->ios2_SrcAddr, 0xFF))
-      {
+             address_has_all(req->ios2_SrcAddr, 0xFF))
+    {
         IoDone(ud, req, S2ERR_BAD_ADDRESS, S2WERR_SRC_ADDRESS);
-      }
+    }
     else
-      {
+    {
         HardwareInit(ud);
         CopyMem(req->ios2_SrcAddr, ud->ud_SoftAddress, 6);
         WriteHwAddress(ud);
         if (!(ud->ud_Flags & UF_ONLINE))
-          {
+        {
             GoOnline(ud);
             ud->ud_Flags |= UF_ONLINE;
-          }
+        }
         ud->ud_Flags |= UF_CONFIGURED;
         IoDone(ud, req, OK, OK);
-      }
+    }
     return;
- }
+}
 
 ///
 /// S2Offline()
 
 void S2Offline(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_UD(DOSBase)
 
     DBG_U("S2_OFFLINE.");
     if (ud->ud_Flags & UF_ONLINE)
-      {
+    {
         GoOffline(ud);
         ud->ud_Flags &= ~UF_ONLINE;
         IoDone(ud, req, OK, OK);
-      }
-    else IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_OFFLINE);
+    }
+    else
+        IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_OFFLINE);
     return;
-  }
+}
 
 ///
 /// S2GetGlobalStats()
 
 void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_U(SysBase)
 
     if (req->ios2_StatData)
-      {
+    {
         CopyMem(&ud->ud_DevStats, req->ios2_StatData, sizeof(struct Sana2DeviceStats));
         IoDone(ud, req, OK, OK);
-      }
-    else IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
-  }
+    }
+    else
+        IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
+}
 
 ///
 /// CmdNSDQuery()
 
 void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
     struct NSDeviceQueryResult *qdata;
@@ -919,30 +961,34 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 
     DBG_U("NSCMD_DEVICEQUERY.");
     if (req->io_Length >= sizeof(struct NSDeviceQueryResult))
-      {
-        if (qdata = (struct NSDeviceQueryResult*)req->io_Data)
-          {
+    {
+        if (qdata = (struct NSDeviceQueryResult *)req->io_Data)
+        {
             if ((qdata->DevQueryFormat == 0) && (qdata->SizeAvailable == 0))
-              {
+            {
                 qdata->SizeAvailable = sizeof(struct NSDeviceQueryResult);
                 qdata->DeviceType = NSDEVTYPE_SANA2;
                 qdata->DeviceSubType = 0;
                 qdata->SupportedCommands = NSDSupported;
                 req->io_Actual = sizeof(struct NSDeviceQueryResult);
-              }
-            else error = IOERR_BADLENGTH;
-          }
-        else error = IOERR_BADADDRESS;
-      }
-    else error = IOERR_BADLENGTH;
+            }
+            else
+                error = IOERR_BADLENGTH;
+        }
+        else
+            error = IOERR_BADADDRESS;
+    }
+    else
+        error = IOERR_BADLENGTH;
 
     /* I don't use IoDone() here, because it writes to ios2_WireError */
     /* but this request can be simple IOStdReq one.                   */
 
     req->io_Error = error;
-    if (!(req->io_Flags & IOF_QUICK)) ReplyMsg(&req->io_Message);
+    if (!(req->io_Flags & IOF_QUICK))
+        ReplyMsg(&req->io_Message);
     return;
-  }
+}
 
 ///
 
@@ -951,74 +997,78 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 /// IntCode()
 
 LONG IntCode(struct UnitData *ud reg(a1))
-  {
+{
     USE_U(SysBase)
     UBYTE intstatus;
     struct IOSana2Req *req;
     LONG my_int = 0;
 
     while (intstatus = (ud->ud_Hardware->regs[NE2000_INT_STATUS] & INTMASK))
-      {
+    {
         if (intstatus & INT_TXERROR)
-          {
+        {
             ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXERROR;
             req = ud->ud_PendingWrite;
             IoDone(ud, req, S2ERR_TX_FAILURE, S2WERR_TOO_MANY_RETIRES);
             Signal(ud->ud_Task, ud->ud_GoWriteMask);
             my_int = 1;
-          }
+        }
 
         if (intstatus & INT_TXPACKET)
-          {
+        {
             ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXPACKET;
             req = ud->ud_PendingWrite;
             ud->ud_DevStats.PacketsSent++;
             IoDone(ud, req, OK, OK);
             Signal(ud->ud_Task, ud->ud_GoWriteMask);
             my_int = 1;
-          }
+        }
 
         if (intstatus & INT_RXPACKET)
-          {
+        {
             ULONG offset, len;
             UWORD mask = 0xFFFF;
             WORD i;
 
             while (RingBufferNotEmpty(ud))
-              {
+            {
                 ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
                 len = PacketReceived(ud);
                 if (req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6]))
-                  {
-                    if (req->ios2_Req.io_Flags & SANA2IOF_RAW) offset = 0;
-                    else offset = 7;
-                    CopyB(((struct BuffFunctions*)req->ios2_BufferManagement)->bf_CopyTo,
-                      req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
+                {
+                    if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
+                        offset = 0;
+                    else
+                        offset = 7;
+                    CopyB(((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo,
+                          req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
                     CopyMem(&ud->ud_RxBuffer[0], req->ios2_DstAddr, 6);
                     CopyMem(&ud->ud_RxBuffer[3], req->ios2_SrcAddr, 6);
                     req->ios2_DataLength = len - (offset << 1);
-                    for (i = 2; i >= 0; i--) mask &= ud->ud_RxBuffer[i];
-                      if (mask == 0xFFFF) req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
+                    for (i = 2; i >= 0; i--)
+                        mask &= ud->ud_RxBuffer[i];
+                    if (mask == 0xFFFF)
+                        req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
                     ud->ud_DevStats.PacketsReceived++;
                     IoDone(ud, req, OK, OK);
-                  }
-              }
+                }
+            }
             my_int = 1;
-          }
-      }
+        }
+    }
     return my_int;
-  }
+}
 
 ///
 /// InstallInterrupt()
 
 LONG InstallInterrupt(struct UnitData *ud)
-  {
+{
     USE_U(SysBase)
     struct Interrupt *intr;
 
     if (intr = AllocMem(sizeof(struct Interrupt), MEMF_PUBLIC | MEMF_CLEAR))
-      {
+    {
         intr->is_Node.ln_Type = NT_INTERRUPT;
         intr->is_Node.ln_Name = ud->ud_Name;
         intr->is_Data = ud;
@@ -1026,74 +1076,74 @@ LONG InstallInterrupt(struct UnitData *ud)
         AddIntServer(INTB_PORTS, intr);
         ud->ud_Interrupt = intr;
         return TRUE;
-      }
+    }
     return FALSE;
-  }
+}
 
 ///
 /// RemoveInterrupt()
 
 void RemoveInterrupt(struct UnitData *ud)
-  {
+{
     USE_U(SysBase)
 
     RemIntServer(INTB_PORTS, ud->ud_Interrupt);
     FreeMem(ud->ud_Interrupt, sizeof(struct Interrupt));
     return;
-  }
+}
 
 ///
 /// FindHardware()
 
-
-
 struct TagItem tags[3] = {
-  { 0, 0 },
-  { 0, 0 },
-  { TAG_END, 0 }
-};
+    {0, 0},
+    {0, 0},
+    {TAG_END, 0}};
 
 volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit)
-  {
+{
     USE(OpenPciBase)
     WORD u = unit;
-    struct pci_dev* board = NULL;
+    struct pci_dev *board = NULL;
     struct Ne2000 *hwbase;
 
     while (u-- >= 0)
-      {
+    {
         tags[0].ti_Tag = PRM_Vendor;
         tags[0].ti_Data = PCI_VENDOR_REALTEK;
         tags[1].ti_Tag = PRM_Device;
         tags[1].ti_Data = PCI_DEVICE_RTL8029;
         tags[2].ti_Tag = TAG_END;
         tags[2].ti_Data = 0;
-        board = FindBoardTagList(board, (struct TagItem*)tags); 
+        board = FindBoardTagList(board, (struct TagItem *)tags);
 
-        if (!board) break;
-      }
+        if (!board)
+            break;
+    }
 
     if (board)
-      {
+    {
         tags[0].ti_Tag = PRM_MemoryAddr0;
         tags[0].ti_Data = (LONG)&hwbase;
-        tags[1].ti_Tag = TAG_END; tags[1].ti_Data = 0;
-        GetBoardAttrsA(board, (struct TagItem*)tags);
+        tags[1].ti_Tag = TAG_END;
+        tags[1].ti_Data = 0;
+        GetBoardAttrsA(board, (struct TagItem *)tags);
 
         tags[0].ti_Tag = PRM_BoardOwner;
         tags[0].ti_Data = (LONG)dd;
-        tags[1].ti_Tag = TAG_END; tags[1].ti_Data = 0;
-        SetBoardAttrsA(board, (struct TagItem*)tags);
+        tags[1].ti_Tag = TAG_END;
+        tags[1].ti_Data = 0;
+        SetBoardAttrsA(board, (struct TagItem *)tags);
         return hwbase;
-      }
+    }
     return NULL;
-  }
+}
 
 ///
 /// HardwareInit()
 
-void HardwareInit (struct UnitData *ud)
-  {
+void HardwareInit(struct UnitData *ud)
+{
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     hw->regs[NE2000_COMMAND] = 0x21;
@@ -1110,13 +1160,13 @@ void HardwareInit (struct UnitData *ud)
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
     hw->regs[NE2000_COMMAND] = 0x21;
     return;
-  }
+}
 
 ///
 /// HardwareReset()
 
-void HardwareReset (struct UnitData *ud)
-  {
+void HardwareReset(struct UnitData *ud)
+{
     USE_U(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE trash;
@@ -1126,13 +1176,13 @@ void HardwareReset (struct UnitData *ud)
     trash = hw->ResetPort;
     HardwareInit(ud);
     return;
-  }
+}
 
 ///
 /// GoOnline()
 
-void GoOnline (struct UnitData *ud)
-  {
+void GoOnline(struct UnitData *ud)
+{
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     HardwareReset(ud);
@@ -1141,18 +1191,18 @@ void GoOnline (struct UnitData *ud)
     hw->regs[NE2000_COMMAND] = 0x22;
     hw->regs[NE2000_TX_CONFIG] = 0x00;
     hw->regs[NE2000_RX_CONFIG] = RXCFG_BCAST | RXCFG_MCAST |
-       ((ud->ud_Flags & UF_PROMISCUOUS) ? RXCFG_PROM : 0);
+                                 ((ud->ud_Flags & UF_PROMISCUOUS) ? RXCFG_PROM : 0);
     hw->regs[NE2000_INT_STATUS] = 0xFF;
-    hw->regs[NE2000_INT_MASK] =  INTMASK;
+    hw->regs[NE2000_INT_MASK] = INTMASK;
 
     return;
-  }
+}
 
 ///
 /// GoOffline()
 
 void GoOffline(struct UnitData *ud)
-  {
+{
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     hw->regs[NE2000_COMMAND] = 0x21;
@@ -1162,26 +1212,26 @@ void GoOffline(struct UnitData *ud)
     hw->regs[NE2000_INT_MASK] = 0;
     RemoveInterrupt(ud);
     return;
-  }
+}
 
 ///
 /// BoardShutdown()
 
 void BoardShutdown(struct UnitData *ud)
-  {
+{
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     GoOffline(ud);
     hw->regs[NE2000_INT_MASK] = 0;
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     return;
-  }
+}
 
 ///
 /// GetPacketHeader()
 
 ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
-  {
+{
     UWORD hdr[2];
 
     ne->regs[NE2000_DMA_COUNTER0] = 4;
@@ -1191,14 +1241,14 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
     hdr[0] = ne->DMAPort;
     hdr[1] = ne->DMAPort;
-    return *(ULONG*)hdr;
-  }
+    return *(ULONG *)hdr;
+}
 
 ///
 /// GetPacket()
 
 void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer)
-  {
+{
     UWORD count;
 
     ne->regs[NE2000_DMA_COUNTER0] = len & 0xFF;
@@ -1208,33 +1258,33 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
 
     for (count = (len + 1) >> 1; count; count--)
-      {
+    {
         *buffer++ = ne->DMAPort;
-      }
+    }
     return;
-  }
+}
 
 ///
 /// PacketReceived()
 
 LONG PacketReceived(struct UnitData *ud)
-  {
+{
     ULONG header, len;
 
     header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage);
     len = swapw(header & 0xFFFF);
-    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD*)ud->ud_RxBuffer);
+    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer);
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage;
     ud->ud_NextPage = (header >> 16) & 0xFF;
     ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
     return len;
-  }
+}
 
 ///
 /// BufferOverflow()
 
 void BufferOverflow(struct UnitData *ud)
-  {
+{
     struct Library *DOSBase = ud->ud_DOSBase;
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE txp, resent = FALSE, intstatus;
@@ -1246,10 +1296,11 @@ void BufferOverflow(struct UnitData *ud)
     hw->regs[NE2000_DMA_COUNTER1] = 0;
 
     if (txp)
-      {
+    {
         intstatus = hw->regs[NE2000_INT_STATUS];
-        if (!(intstatus & (INT_TXPACKET | INT_TXERROR))) resent = TRUE;
-      }
+        if (!(intstatus & (INT_TXPACKET | INT_TXERROR)))
+            resent = TRUE;
+    }
 
     hw->regs[NE2000_TX_CONFIG] = TXCFG_LOOP_INT;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
@@ -1259,23 +1310,24 @@ void BufferOverflow(struct UnitData *ud)
     ud->ud_NextPage = RX_BUFFER;
 
     hw->regs[NE2000_TX_CONFIG] = TXCFG_LOOP_NONE;
-    if (resent) hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START |
-      COMMAND_ABORT | COMMAND_TXP;
+    if (resent)
+        hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START |
+                                   COMMAND_ABORT | COMMAND_TXP;
     hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
 
     return;
-  }
+}
 
 ///
 /// SendPacket()
 
 void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE ethbuffer[1536], *datapointer;
-    UWORD *ethdata = (UWORD*)ethbuffer;
+    UWORD *ethdata = (UWORD *)ethbuffer;
     ULONG data_len = req->ios2_DataLength;
     UWORD cycles;
     WORD i;
@@ -1285,30 +1337,33 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* of ethbuffer, otherwise points to ef_Data field (first byte after Ethernet header.                  */
 
     if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
-      {
-        struct EthFrame *ef = (struct EthFrame*)ethbuffer;
+    {
+        struct EthFrame *ef = (struct EthFrame *)ethbuffer;
 
         CopyMem(req->ios2_DstAddr, ef->ef_DestAddr, 6);
         CopyMem(ud->ud_EtherAddress, ef->ef_SrcAddr, 6);
         ef->ef_Type = req->ios2_PacketType;
         datapointer = ef->ef_Data;
-      }
-    else datapointer = ethbuffer;
+    }
+    else
+        datapointer = ethbuffer;
 
     /* Copy data from network stack using supplied CopyFrom() function. */
 
-    CopyB(((struct BuffFunctions*)req->ios2_BufferManagement)->bf_CopyFrom,
-      datapointer, req->ios2_Data, data_len);
+    CopyB(((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom,
+          datapointer, req->ios2_Data, data_len);
 
     /* Now we need length of data to send to hardware. IORequest ios2_DataLength does not include header   */
     /* length if packet is not RAW. So we sholud add it.                                                   */
 
-    if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW)) data_len += 14;
+    if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
+        data_len += 14;
 
     /* Packet sent to Ethernet hadrware should be at least 60 bytes long (4 bytes of CRC will be appended  */
     /* by hardware giving 64 bytes). If our packet is shorter we should extend it with spaces.             */
 
-    while (data_len < 60) ethbuffer[data_len++] = ' ';
+    while (data_len < 60)
+        ethbuffer[data_len++] = ' ';
 
     /* Now the packet is ready to send it to NIC buffer. It is done by Remote Write DMA command. Firstly   */
     /* write addres and counter should be initialized, then command register.                              */
@@ -1321,7 +1376,8 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     /* Now we can send packet data to DMAPort word by word.                                                */
 
-    for (cycles = (data_len + 1) >> 1; cycles; cycles--) hw->DMAPort = *ethdata++;
+    for (cycles = (data_len + 1) >> 1; cycles; cycles--)
+        hw->DMAPort = *ethdata++;
 
     /* Send packet to the wire. Register setup first.                                                      */
 
@@ -1338,13 +1394,13 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     DBG_T("Packet sent.");
     return;
-  }
+}
 
 ///
 /// GetHwAddress()
 
 void GetHwAddress(struct UnitData *ud)
-  {
+{
     USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     WORD i;
@@ -1354,44 +1410,47 @@ void GetHwAddress(struct UnitData *ud)
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = 0;
     hw->regs[NE2000_COMMAND] = COMMAND_READ;
-    for (i = 0; i < 6; i++) ud->ud_EtherAddress[i] = hw->DMAPort;
+    for (i = 0; i < 6; i++)
+        ud->ud_EtherAddress[i] = hw->DMAPort;
 
-    #ifdef PDEBUG
-      DBG_U("\thardware address (read):");
-      for (i = 0; i < 6; i++) DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
-    #endif
+#ifdef PDEBUG
+    DBG_U("\thardware address (read):");
+    for (i = 0; i < 6; i++)
+        DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
+#endif
 
     return;
-  }
+}
 
 ///
 /// WriteHwAddress()
 
 void WriteHwAddress(struct UnitData *ud)
-  {
+{
     USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     WORD i;
 
-    #ifdef PDEBUG
-      DBG_U("\thardware address (write):");
-      for (i = 0; i < 6; i++) DBG1_U("\t%02lx", ud->ud_SoftAddress[i]);
-    #endif
+#ifdef PDEBUG
+    DBG_U("\thardware address (write):");
+    for (i = 0; i < 6; i++)
+        DBG1_U("\t%02lx", ud->ud_SoftAddress[i]);
+#endif
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP;
     for (i = 0; i < 6; i++)
-      {
+    {
         hw->regs[NE2000_PHYSICAL_ADDR0 + i] = ud->ud_SoftAddress[i];
-      }
+    }
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
     return;
-  }
+}
 
 ///
 /// RingBufferNotEmpty()
 
 LONG RingBufferNotEmpty(struct UnitData *ud)
-  {
+{
     UBYTE current;
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
@@ -1399,9 +1458,11 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
     current = hw->regs[NE2000_CURRENT_PAGE];
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
 
-    if (ud->ud_NextPage == current) return FALSE;
-    else return TRUE;
-  }
+    if (ud->ud_NextPage == current)
+        return FALSE;
+    else
+        return TRUE;
+}
 
 ///
 
@@ -1410,179 +1471,181 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
 /// SearchReadRequest()
 
 struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue, ULONG type)
-  {
+{
     struct Library *SysBase = ud->ud_SysBase;
     struct IOSana2Req *req, *found = NULL, *x;
 
-    for (req = (struct IOSana2Req*)queue->mlh_Head;
-      req->ios2_Req.io_Message.mn_Node.ln_Succ;
-      req = (struct IOSana2Req*)req->ios2_Req.io_Message.mn_Node.ln_Succ)
-      {
+    for (req = (struct IOSana2Req *)queue->mlh_Head;
+         req->ios2_Req.io_Message.mn_Node.ln_Succ;
+         req = (struct IOSana2Req *)req->ios2_Req.io_Message.mn_Node.ln_Succ)
+    {
         if (req->ios2_PacketType == type)
-          {
-            Remove((struct Node*)req);
+        {
+            Remove((struct Node *)req);
             found = req;
             break;
-          }
-      }
+        }
+    }
     return found;
-  }
+}
 
 ///
 /// FlushQueues()
 
 void FlushQueues(struct UnitData *ud)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
     struct IOSana2Req *xreq;
 
     for (;;)
-      {
+    {
         Disable();
-        xreq = (struct IOSana2Req*)RemHead((struct List*)&ud->ud_RxQueue);
+        xreq = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_RxQueue);
         Enable();
-        if (!xreq) break;
+        if (!xreq)
+            break;
         DBG1_T("<- READ [$08%lx] [F].", xreq);
         IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
-      }
+    }
 
     for (;;)
-      {
+    {
         Disable();
-        xreq = (struct IOSana2Req*)RemHead((struct List*)&ud->ud_TxQueue);
+        xreq = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
         Enable();
-        if (!xreq) break;
+        if (!xreq)
+            break;
         DBG1_T("<- WRITE [$08%lx] [F].", xreq);
         IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
-      }
+    }
     return;
-  }
+}
 
 ///
 /// MainLoop()
 
 void MainLoop(struct UnitData *ud, struct MsgPort *port)
-  {
+{
     USE_U(SysBase)
     USE_UD(DOSBase)
     ULONG signals, sigmask;
     struct IOSana2Req *req;
 
-    #ifdef PDEBUG
+#ifdef PDEBUG
     UBYTE wname[60], *ptr;
 
     ptr = strcpy(wname, "CON:400/17/400/300/");
     ptr = strcpy(ptr, ud->ud_Name);
-    strcpy(ptr,"/AUTO/CLOSE/WAIT");
+    strcpy(ptr, "/AUTO/CLOSE/WAIT");
     ud->tdebug = Open(wname, MODE_NEWFILE);
-    #endif
+#endif
 
     sigmask = 1 << port->mp_SigBit;
     for (;;)
-      {
+    {
         DBG_T("Waiting...");
         signals = Wait(SIGBREAKF_CTRL_C | sigmask | ud->ud_GoWriteMask);
 
         if (signals & ud->ud_GoWriteMask)
-          {
+        {
             DBG_T("GoWrite");
             Disable();
-            req = (struct IOSana2Req*)RemHead((struct List*)&ud->ud_TxQueue);
+            req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
             Enable();
             ud->ud_PendingWrite = req;
-            if (req) SendPacket(ud, req);
-          }
+            if (req)
+                SendPacket(ud, req);
+        }
 
         if (signals & SIGBREAKF_CTRL_C)
-          {
+        {
             DBG1_T("TASK: %s task killed.", ud->ud_Name);
             return;
-          }
+        }
 
         if (signals & sigmask)
-          {
+        {
             struct IOSana2Req *req;
 
             DBG_T("port");
-            while (req = (struct IOSana2Req*)GetMsg(port))
-              {
+            while (req = (struct IOSana2Req *)GetMsg(port))
+            {
                 switch (req->ios2_Req.io_Command)
-                  {
-                    case CMD_READ:
-                      DBG1_T("-> READ [$%08lx].", req);
-                      Disable();
-                      AddTail((struct List*)&ud->ud_RxQueue, (struct Node*)req);
-                      Enable();
+                {
+                case CMD_READ:
+                    DBG1_T("-> READ [$%08lx].", req);
+                    Disable();
+                    AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
+                    Enable();
                     break;
 
-                    case S2_BROADCAST:
-                    case CMD_WRITE:
-                      DBG1_T("-> WRITE [$%08lx].", req);
-                      if (ud->ud_PendingWrite)
-                        {
-                          Disable();
-                          AddTail((struct List*)&ud->ud_TxQueue, (struct Node*)req);
-                          Enable();
-                        }
-                      else
-                        {
-                          ud->ud_PendingWrite = req;
-                          SendPacket(ud, req);
-                          DBG_T("Packet sent 2.");
-                        }
+                case S2_BROADCAST:
+                case CMD_WRITE:
+                    DBG1_T("-> WRITE [$%08lx].", req);
+                    if (ud->ud_PendingWrite)
+                    {
+                        Disable();
+                        AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
+                        Enable();
+                    }
+                    else
+                    {
+                        ud->ud_PendingWrite = req;
+                        SendPacket(ud, req);
+                        DBG_T("Packet sent 2.");
+                    }
                     break;
 
-                    case CMD_FLUSH:
-                      DBG1_T("-> FLUSH [$%08lx].", req);
-                      FlushQueues(ud);
-                      DBG1_T("<- FLUSH [$%08lx].", req);
-                      IoDone(ud, req, OK, OK);
+                case CMD_FLUSH:
+                    DBG1_T("-> FLUSH [$%08lx].", req);
+                    FlushQueues(ud);
+                    DBG1_T("<- FLUSH [$%08lx].", req);
+                    IoDone(ud, req, OK, OK);
                     break;
 
-                    default:
-                      DBG2_T("-> Unknown ($%lx) [$%08lx].", req->ios2_Req.io_Command, req);
-                  }
-              }
-          }
-      }
-  }
+                default:
+                    DBG2_T("-> Unknown ($%lx) [$%08lx].", req->ios2_Req.io_Command, req);
+                }
+            }
+        }
+    }
+}
 
 ///
 /// UnitTask()
 
 void UnitTask(void)
-  {
-    struct Library *SysBase = *(struct Library**)4;
+{
+    struct Library *SysBase = *(struct Library **)4;
     struct Task *task;
     struct MsgPort *port;
     struct UnitData *ud;
 
-    #ifdef PDEBUG
+#ifdef PDEBUG
     struct Library *DOSBase;
-    #endif
+#endif
 
     task = FindTask(NULL);
     if (port = CreateMsgPort())
-      {
+    {
         port->mp_Node.ln_Name = task->tc_Node.ln_Name;
         port->mp_Node.ln_Pri = 20;
         AddPort(port);
         WaitPort(port);
         RemPort(port);
-        ud = (struct UnitData*)GetMsg(port);
+        ud = (struct UnitData *)GetMsg(port);
         if ((ud->ud_GoWriteBit = AllocSignal(-1)) != -1)
-          {
+        {
             ud->ud_GoWriteMask = 1 << ud->ud_GoWriteBit;
             MainLoop(ud, port);
             FreeSignal(ud->ud_GoWriteBit);
-          }
+        }
         DeleteMsgPort(port);
         Forbid();
         ReplyMsg(&ud->ud_Message);
-      }
+    }
     return;
-  }
+}
 
 ///
-
