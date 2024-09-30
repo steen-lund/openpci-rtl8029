@@ -809,24 +809,28 @@ void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
     DBG_U("S2_DEVICEQUERY.");
     if (query)
     {
-        if (query->SizeAvailable >= sizeof(struct Sana2DeviceQuery))
-        {
-            query->SizeSupplied = sizeof(struct Sana2DeviceQuery);
-            query->DevQueryFormat = 0;
-            query->DeviceLevel = 0;
+        query->DevQueryFormat = 0;
+        query->DeviceLevel = 0;
+
+        if(query->SizeAvailable >= 18)
             query->AddrFieldSize = 48;
+
+        if (query->SizeAvailable >= 22)
             query->MTU = 1500;
+
+        if (query->SizeAvailable >= 26)
             query->BPS = 10000000;
+
+        if (query->SizeAvailable >= 30)
             query->HardwareType = S2WireType_Ethernet;
-            IoDone(ud, req, OK, OK);
-        }
-        else
-        {
-            IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_GENERIC_ERROR);
-        }
+
+        // Report 30 bytes of data.
+        query->SizeSupplied = query->SizeAvailable < 30 ? query->SizeAvailable : 30;
+        IoDone(ud, req, OK, OK);
     }
     else
     {
+        DBG_U("S2_DEVICEQUERY: Error, bad argument (NULL pointer).");
         IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
     }
     return;
