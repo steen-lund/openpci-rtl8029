@@ -8,7 +8,7 @@
 #include <proto/expansion.h>
 #include <proto/utility.h>
 #include <proto/dos.h>
-#include <proto/prometheus.h>
+#include <proto/openpci.h>
 #include <proto/timer.h>
 #include <exec/libraries.h>
 #include <exec/resident.h>
@@ -17,12 +17,15 @@
 #include <devices/sana2.h>
 #include <hardware/intbits.h>
 #include <dos/dostags.h>
+#include <libraries/pcitags.h>
+#include <utility/tagitem.h>
+#include <libraries/openpci.h>
 
-#include <faststring.h>
+/*#include <faststring.h>*/  /* Probably used for strcpy */
 
 #include "rev.h"
 #include "ne2000.h"
-#include "endian.h"
+// #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
 
 #define OK           0
 
@@ -48,27 +51,40 @@
 
 // Macro for declaring local libraries bases.
 
-#define USE(a) struct Library *##a = dd->dd_##a;
-#define USE_U(a) struct Library *##a = ud->ud_##a;
+#define USE(a) struct Library* a = dd->dd_##a;
+#define USE_U(a) struct Library* a = ud->ud_##a;
 
 // Debug on/off switch (debug off if commented).
 
-//#define PDEBUG 1
+#define PDEBUG 1
 
 // Macros for debug messages.
 
 #ifdef PDEBUG
-  #define USE_D(a) struct Library *##a = dd->dd_##a;
-  #define USE_UD(a) struct Library *##a = ud->ud_##a;
-  #define DBG(a) FPrintf(dd->debug, a "\n")
-  #define DBG_U(a) FPrintf(ud->debug, a "\n")
-  #define DBG_T(a) FPrintf(ud->tdebug, a "\n")
-  #define DBG1(a,b) FPrintf(dd->debug, a "\n",(LONG)b)
-  #define DBG1_U(a,b) FPrintf(ud->debug, a "\n",(LONG)b)
-  #define DBG1_T(a,b) FPrintf(ud->tdebug, a "\n",(LONG)b)
-  #define DBG2(a,b,c) FPrintf(dd->debug, a "\n",(LONG)b,(LONG)c)
-  #define DBG2_U(a,b,c) FPrintf(ud->debug, a "\n",(LONG)b,(LONG)c)
-  #define DBG2_T(a,b,c) FPrintf(ud->tdebug, a "\n",(LONG)b,(LONG)c)
+  #include <proto/debug.h>
+
+  #define USE_D(a) struct Library* a = dd->dd_##a;
+  #define USE_UD(a) struct Library* a = ud->ud_##a;
+/*  #define DBG(a) KPrintf(dd->debug, a "\n")
+  #define DBG_U(a) KPrintf(ud->debug, a "\n")
+  #define DBG_T(a) KPrintf(ud->tdebug, a "\n")
+  #define DBG1(a,b) KPrintf(dd->debug, a "\n",(LONG)b)
+  #define DBG1_U(a,b) KPrintf(ud->debug, a "\n",(LONG)b)
+  #define DBG1_T(a,b) KPrintf(ud->tdebug, a "\n",(LONG)b)
+  #define DBG2(a,b,c) KPrintf(dd->debug, a "\n",(LONG)b,(LONG)c)
+  #define DBG2_U(a,b,c) KPrintf(ud->debug, a "\n",(LONG)b,(LONG)c)
+  #define DBG2_T(a,b,c) KPrintf(ud->tdebug, a "\n",(LONG)b,(LONG)c)*/
+
+  #define DBG(a) KPrintF(a "\n")
+  #define DBG_U(a) KPrintF(a "\n")
+  #define DBG_T(a) KPrintF(a "\n")
+  #define DBG1(a,b) KPrintF(a "\n",(LONG)b)
+  #define DBG1_U(a,b) KPrintF(a "\n",(LONG)b)
+  #define DBG1_T(a,b) KPrintF(a "\n",(LONG)b)
+  #define DBG2(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
+  #define DBG2_U(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
+  #define DBG2_T(a,b,c) KPrintF(a "\n",(LONG)b,(LONG)c)
+
 #else
   #define USE_D(a)
   #define USE_UD(a)
@@ -106,7 +122,7 @@ struct DevData
     struct Library           dd_Lib;
     APTR                     dd_SegList;
     struct Library          *dd_SysBase;
-    struct Library          *dd_PrometheusBase;
+    struct Library          *dd_OpenPciBase;
     struct Library          *dd_UtilityBase;
     struct Library          *dd_DOSBase;
     struct Library          *dd_TimerBase;
@@ -137,7 +153,7 @@ struct UnitData
     ULONG                    ud_OpenCnt;
     ULONG                    ud_GoWriteMask;
     UWORD                    ud_RxBuffer[768];
-    UBYTE                    ud_Name[24];
+    UBYTE                    ud_Name[27];
     UBYTE                    ud_EtherAddress[6];
     UBYTE                    ud_SoftAddress[6];
     struct Sana2DeviceStats  ud_DevStats;
@@ -167,7 +183,7 @@ LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d
   struct DevData *dd reg(a6));
 APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
 APTR DevExpunge(struct DevData *dd reg(a6));
-long DevReserved(void);
+LONG DevReserved(void);
 void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
 ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
 
@@ -182,7 +198,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit);
 void CloseUnit(struct DevData *dd, struct UnitData *ud);
 void ExpungeUnit(struct DevData *dd, struct UnitData *ud);
 
-void __saveds CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req);
+void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req);
 void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req);
 void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req);
 void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req);
@@ -238,6 +254,16 @@ UWORD NSDSupported[] =
 
 ///
 
+/* Good enough */
+unsigned char* strcpy(unsigned char *dest, const unsigned char *src)
+{
+  unsigned char* d = dest;
+  while (*src)
+    *dest++ = *src++;
+  *dest = 0;
+  return d;
+}
+
 /// DevInit()
 // Called when the device is loaded into memory. Makes system library, initializes Library structure, opens
 // libraries used by the device. Returns device base or NULL if init failed.
@@ -266,9 +292,9 @@ struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
             for (i = 0; i < 4; i++) dd->dd_Units[i] = NULL;
 
             #ifdef PDEBUG
-            strcpy(dd->dpath, "KCON:0/17/400/300/prm-rtl8029.device (main)/AUTO/CLOSE/WAIT");
-            GetVar("PrometheusDebug", dd->dpath, 128, 0);
-            dd->debug = Open(dd->dpath, MODE_NEWFILE);
+            /*strcpy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
+            /*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
+            /*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
             #endif
 
             DBG1("Device initialized, base at $%08lx.", dd);
@@ -492,7 +518,7 @@ LONG OpenDeviceLibraries(struct DevData *dd)
     USE(SysBase)
 
     if (!(dd->dd_UtilityBase = OpenLibrary("utility.library", 39))) return FALSE;
-    if (!(dd->dd_PrometheusBase = OpenLibrary("prometheus.library", 2))) return FALSE;
+    if (!(dd->dd_OpenPciBase = OpenLibrary("openpci.library", 5))) return FALSE;
     if (!(dd->dd_DOSBase = OpenLibrary("dos.library", 38))) return FALSE;
     if (OpenDevice ("timer.device", UNIT_MICROHZ, (struct IORequest*)&dd->dd_Treq, 0) == 0)
       {
@@ -510,7 +536,7 @@ void CloseDeviceLibraries(struct DevData *dd)
     USE(SysBase)
 
     if (dd->dd_DOSBase) CloseLibrary(dd->dd_DOSBase);
-    if (dd->dd_PrometheusBase) CloseLibrary(dd->dd_PrometheusBase);
+    if (dd->dd_OpenPciBase) CloseLibrary(dd->dd_OpenPciBase);
     if (dd->dd_UtilityBase) CloseLibrary(dd->dd_UtilityBase);
     if (dd->dd_TimerBase) CloseDevice ((struct IORequest*)&dd->dd_Treq);
   }
@@ -691,7 +717,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_SysBase = dd->dd_SysBase;
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
-            strcpy(ud->ud_Name, "prm-rtl8029.device (x)");
+            strcpy(ud->ud_Name, "openpci-rtl8029.device (x)");
             ud->ud_Name[20] = '0' + unit;
             ud->ud_RxQueue.mlh_Head = (struct MinNode*)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
@@ -884,7 +910,7 @@ void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req)
 ///
 /// CmdNSDQuery()
 
-void __saveds CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
+void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
   {
     USE_U(SysBase)
     USE_UD(DOSBase)
@@ -1019,30 +1045,45 @@ void RemoveInterrupt(struct UnitData *ud)
 ///
 /// FindHardware()
 
+
+
+struct TagItem tags[3] = {
+  { 0, 0 },
+  { 0, 0 },
+  { TAG_END, 0 }
+};
+
 volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit)
   {
-    USE(PrometheusBase)
+    USE(OpenPciBase)
     WORD u = unit;
-    APTR board = NULL;
+    struct pci_dev* board = NULL;
     struct Ne2000 *hwbase;
 
     while (u-- >= 0)
       {
-        board = Prm_FindBoardTags(board,
-          PRM_Vendor, PCI_VENDOR_REALTEK,
-          PRM_Device, PCI_DEVICE_RTL8029,
-        TAG_END);
+        tags[0].ti_Tag = PRM_Vendor;
+        tags[0].ti_Data = PCI_VENDOR_REALTEK;
+        tags[1].ti_Tag = PRM_Device;
+        tags[1].ti_Data = PCI_DEVICE_RTL8029;
+        tags[2].ti_Tag = TAG_END;
+        tags[2].ti_Data = 0;
+        board = FindBoardTagList(board, (struct TagItem*)tags); 
+
         if (!board) break;
       }
 
     if (board)
       {
-        Prm_GetBoardAttrsTags(board,
-          PRM_MemoryAddr0, (LONG)&hwbase,
-        TAG_END);
-        Prm_SetBoardAttrsTags(board,
-          PRM_BoardOwner, (LONG)dd,
-        TAG_END);
+        tags[0].ti_Tag = PRM_MemoryAddr0;
+        tags[0].ti_Data = (LONG)&hwbase;
+        tags[1].ti_Tag = TAG_END; tags[1].ti_Data = 0;
+        GetBoardAttrsA(board, (struct TagItem*)tags);
+
+        tags[0].ti_Tag = PRM_BoardOwner;
+        tags[0].ti_Data = (LONG)dd;
+        tags[1].ti_Tag = TAG_END; tags[1].ti_Data = 0;
+        SetBoardAttrsA(board, (struct TagItem*)tags);
         return hwbase;
       }
     return NULL;
@@ -1156,7 +1197,7 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
 ///
 /// GetPacket()
 
-GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer)
+void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer)
   {
     UWORD count;
 
