@@ -15,7 +15,7 @@ LIBS    =
 
 all: header.o driver.o
 	$(CC) -s -nostdlib -msmall-code -o openpci-rtl8029.device\
-    header.o driver.o -lsmall
+    header.o driver.o -ldebug
 
 driver.o: driver.c ne2000.h rev.h
 	$(CC) -O2 -c -msmall-code -fomit-frame-pointer $(INCLUDES) driver.c
