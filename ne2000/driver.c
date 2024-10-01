@@ -1099,17 +1099,16 @@ void RemoveInterrupt(struct UnitData *ud)
 ///
 /// FindHardware()
 
-struct TagItem tags[3] = {
-    {0, 0},
-    {0, 0},
-    {TAG_END, 0}};
-
 volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit)
 {
     USE(OpenPciBase)
     WORD u = unit;
     struct pci_dev *board = NULL;
     struct Ne2000 *hwbase;
+    struct TagItem tags[3] = {
+        {0, 0},
+        {0, 0},
+        {TAG_END, 0}};
 
     while (u-- >= 0)
     {
