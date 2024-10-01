@@ -1,6 +1,8 @@
 /* OpenPCI NE2000 driver. */
-
 /// includes and defines
+
+// ignore that STRPTR is unsigned char *, but all string literals are char *
+#pragma GCC diagnostic ignored "-Wpointer-sign"
 
 #define __NOLIBBASE__
 
@@ -283,13 +285,13 @@ struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
         dd->dd_SysBase = SysBase;
         if (OpenDeviceLibraries(dd))
         {
-            USE_D(DOSBase)
             WORD i;
 
             for (i = 0; i < 4; i++)
                 dd->dd_Units[i] = NULL;
 
 #ifdef PDEBUG
+/*USE_D(DOSBase)*/
 /*strcpy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
 /*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
 /*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
@@ -310,8 +312,6 @@ struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
 LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d1),
              struct DevData *dd reg(a6))
 {
-    USE(SysBase)
-    USE_D(DOSBase)
     struct UnitData *ud;
 
     DBG("DevOpen() called.");
@@ -319,7 +319,7 @@ LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d
 
     if ((unit >= 0) && (unit <= 3))
     {
-        if (ud = OpenUnit(dd, unit, flags))
+        if ((ud = OpenUnit(dd, unit, flags)))
         {
             req->ios2_Req.io_Error = 0;
             req->ios2_Req.io_Message.mn_Node.ln_Type = NT_REPLYMSG;
@@ -348,8 +348,6 @@ LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d
 APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 {
     USE(SysBase)
-    USE_D(DOSBase)
-    WORD unit;
 
     CloseUnit(dd, (struct UnitData *)req->ios2_Req.io_Unit);
 
@@ -372,7 +370,6 @@ APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 APTR DevExpunge(struct DevData *dd reg(a6))
 {
     USE(SysBase)
-    USE_D(DOSBase)
     APTR seglist;
 
     if (dd->dd_Lib.lib_OpenCnt)
@@ -402,7 +399,6 @@ LONG DevReserved(void)
 void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 {
     USE(SysBase)
-    USE_D(DOSBase)
     struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     WORD i;
 
@@ -465,7 +461,6 @@ void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 {
     USE(SysBase)
-    USE_D(DOSBase)
     LONG ret = 0;
     struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     struct MinList *list;
@@ -572,13 +567,12 @@ LONG PrepareCookie(struct IOSana2Req *req, struct DevData *dd)
 {
     USE(SysBase)
     USE(UtilityBase)
-    USE_D(DOSBase)
 
     if (req->ios2_BufferManagement)
     {
         struct BuffFunctions *bfun;
 
-        if (bfun = AllocMem(sizeof(struct BuffFunctions), MEMF_ANY))
+        if ((bfun = AllocMem(sizeof(struct BuffFunctions), MEMF_ANY)))
         {
             bfun->bf_CopyFrom = (APTR)GetTagData(S2_CopyFromBuff, NULL,
                                                  (struct TagItem *)req->ios2_BufferManagement);
@@ -644,7 +638,6 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
 void KillTask(struct DevData *dd, struct UnitData *ud)
 {
     USE(SysBase)
-    USE_D(DOSBase)
 
     Signal(ud->ud_Task, SIGBREAKF_CTRL_C);
     WaitPort(ud->ud_LifeTime);
@@ -672,7 +665,6 @@ void ClearGlobalStats(struct UnitData *ud)
 
 struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
 {
-    USE_D(DOSBase)
     struct UnitData *ud = dd->dd_Units[unit];
 
     DBG("OpenUnit() called.");
@@ -713,8 +705,6 @@ struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
 
 void CloseUnit(struct DevData *dd, struct UnitData *ud)
 {
-    USE_D(DOSBase)
-
     DBG1("%s closed.", ud->ud_Name);
     if (!(--ud->ud_OpenCnt))
         ExpungeUnit(dd, ud);
@@ -727,14 +717,13 @@ void CloseUnit(struct DevData *dd, struct UnitData *ud)
 struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 {
     USE(SysBase)
-    USE(DOSBase)
     struct UnitData *ud;
     WORD i;
 
     DBG("InitializeUnit() called.");
-    if (ud = AllocMem(sizeof(struct UnitData), MEMF_PUBLIC | MEMF_CLEAR))
+    if ((ud = AllocMem(sizeof(struct UnitData), MEMF_PUBLIC | MEMF_CLEAR)))
     {
-        if (ud->ud_Hardware = FindHardware(dd, unit))
+        if ((ud->ud_Hardware = FindHardware(dd, unit)))
         {
 #ifdef PDEBUG
             ud->debug = dd->debug;
@@ -778,7 +767,6 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
 {
     USE(SysBase)
-    USE_D(DOSBase)
     WORD unit;
 
     if (ud)
@@ -803,7 +791,6 @@ void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
 
 void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
 {
-    USE_UD(DOSBase)
     struct Sana2DeviceQuery *query = req->ios2_StatData;
 
     DBG_U("S2_DEVICEQUERY.");
@@ -842,7 +829,6 @@ void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
 void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
 
     DBG_U("S2_GETSTATIONADDRESS.");
     CopyMem(ud->ud_SoftAddress, req->ios2_SrcAddr, 6);
@@ -856,8 +842,6 @@ void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
 
 void S2Online(struct UnitData *ud, struct IOSana2Req *req)
 {
-    USE_UD(DOSBase)
-
     DBG_U("S2_ONLINE.");
     ClearGlobalStats(ud);
     if (!(ud->ud_Flags & UF_ONLINE))
@@ -889,7 +873,6 @@ BOOL address_has_all(UBYTE *addr, UBYTE num)
 void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
 
     DBG_U("S2_CONFIGINTERFACE.");
     ClearGlobalStats(ud);
@@ -923,8 +906,6 @@ void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
 
 void S2Offline(struct UnitData *ud, struct IOSana2Req *req)
 {
-    USE_UD(DOSBase)
-
     DBG_U("S2_OFFLINE.");
     if (ud->ud_Flags & UF_ONLINE)
     {
@@ -959,14 +940,13 @@ void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req)
 void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
     struct NSDeviceQueryResult *qdata;
     LONG error = OK;
 
     DBG_U("NSCMD_DEVICEQUERY.");
     if (req->io_Length >= sizeof(struct NSDeviceQueryResult))
     {
-        if (qdata = (struct NSDeviceQueryResult *)req->io_Data)
+        if ((qdata = (struct NSDeviceQueryResult *)req->io_Data))
         {
             if ((qdata->DevQueryFormat == 0) && (qdata->SizeAvailable == 0))
             {
@@ -1007,7 +987,7 @@ LONG IntCode(struct UnitData *ud reg(a1))
     struct IOSana2Req *req;
     LONG my_int = 0;
 
-    while (intstatus = (ud->ud_Hardware->regs[NE2000_INT_STATUS] & INTMASK))
+    while ((intstatus = (ud->ud_Hardware->regs[NE2000_INT_STATUS] & INTMASK)))
     {
         if (intstatus & INT_TXERROR)
         {
@@ -1038,7 +1018,7 @@ LONG IntCode(struct UnitData *ud reg(a1))
             {
                 ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
                 len = PacketReceived(ud);
-                if (req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6]))
+                if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
                 {
                     if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
                         offset = 0;
@@ -1071,7 +1051,7 @@ LONG InstallInterrupt(struct UnitData *ud)
     USE_U(SysBase)
     struct Interrupt *intr;
 
-    if (intr = AllocMem(sizeof(struct Interrupt), MEMF_PUBLIC | MEMF_CLEAR))
+    if ((intr = AllocMem(sizeof(struct Interrupt), MEMF_PUBLIC | MEMF_CLEAR)))
     {
         intr->is_Node.ln_Type = NT_INTERRUPT;
         intr->is_Node.ln_Name = ud->ud_Name;
@@ -1172,7 +1152,7 @@ void HardwareReset(struct UnitData *ud)
 {
     USE_U(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
-    UBYTE trash;
+    UBYTE trash = 0b10100101;
 
     hw->ResetPort = trash;
     Delay(1);
@@ -1235,16 +1215,15 @@ void BoardShutdown(struct UnitData *ud)
 
 ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
 {
-    UWORD hdr[2];
+    ULONG hdr;
 
     ne->regs[NE2000_DMA_COUNTER0] = 4;
     ne->regs[NE2000_DMA_COUNTER1] = 0;
     ne->regs[NE2000_DMA_START_ADDR0] = 0;
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
-    hdr[0] = ne->DMAPort;
-    hdr[1] = ne->DMAPort;
-    return *(ULONG *)hdr;
+    hdr = (ne->DMAPort << 16) | (ne->DMAPort);
+    return hdr;
 }
 
 ///
@@ -1327,13 +1306,11 @@ void BufferOverflow(struct UnitData *ud)
 void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE ethbuffer[1536], *datapointer;
     UWORD *ethdata = (UWORD *)ethbuffer;
     ULONG data_len = req->ios2_DataLength;
     UWORD cycles;
-    WORD i;
 
     /* If not raw packets, fill in Dst, Src and Type fields of Ethernet frame. 'datapointer' is a vairable */
     /* holding address of data to copy from network stack. If packet is raw, datapointer points to start   */
@@ -1404,7 +1381,6 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
 void GetHwAddress(struct UnitData *ud)
 {
-    USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     WORD i;
 
@@ -1430,7 +1406,6 @@ void GetHwAddress(struct UnitData *ud)
 
 void WriteHwAddress(struct UnitData *ud)
 {
-    USE_UD(DOSBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     WORD i;
 
@@ -1476,7 +1451,7 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
 struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue, ULONG type)
 {
     struct Library *SysBase = ud->ud_SysBase;
-    struct IOSana2Req *req, *found = NULL, *x;
+    struct IOSana2Req *req, *found = NULL;
 
     for (req = (struct IOSana2Req *)queue->mlh_Head;
          req->ios2_Req.io_Message.mn_Node.ln_Succ;
@@ -1498,7 +1473,6 @@ struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue,
 void FlushQueues(struct UnitData *ud)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
     struct IOSana2Req *xreq;
 
     for (;;)
@@ -1624,10 +1598,6 @@ void UnitTask(void)
     struct Task *task;
     struct MsgPort *port;
     struct UnitData *ud;
-
-#ifdef PDEBUG
-    struct Library *DOSBase;
-#endif
 
     task = FindTask(NULL);
     if (port = CreateMsgPort())
