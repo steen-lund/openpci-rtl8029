@@ -1215,15 +1215,21 @@ void BoardShutdown(struct UnitData *ud)
 
 ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
 {
-    ULONG hdr;
+    union
+    {
+        ULONG l;   // 32-bit access to 16-bit data
+        UWORD w[2];
+    } hdr;
+ 
 
     ne->regs[NE2000_DMA_COUNTER0] = 4;
     ne->regs[NE2000_DMA_COUNTER1] = 0;
     ne->regs[NE2000_DMA_START_ADDR0] = 0;
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
-    hdr = (ne->DMAPort << 16) | (ne->DMAPort);
-    return hdr;
+    hdr.w[0] = ne->DMAPort;
+    hdr.w[1] = ne->DMAPort;
+    return hdr.l;
 }
 
 ///
