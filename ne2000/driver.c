@@ -142,6 +142,7 @@ struct UnitData
     struct Message ud_Message;
     volatile struct Ne2000 *ud_Hardware;
     struct Library *ud_SysBase;
+    struct Library *ud_OpenPciBase;
     struct Library *ud_DOSBase;
     struct Library *ud_TimerBase;
     struct Interrupt *ud_Interrupt;
@@ -151,6 +152,7 @@ struct UnitData
     struct MinList ud_RxQueue;
     struct MinList ud_TxQueue;
     struct IOSana2Req *ud_PendingWrite;
+    struct pci_dev* ud_PciDev;
     ULONG ud_OpenCnt;
     ULONG ud_GoWriteMask;
     UWORD ud_RxBuffer[768];
@@ -210,7 +212,7 @@ void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req);
 
 void HardwareReset(struct UnitData *ud);
 void HardwareInit(struct UnitData *ud);
-volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit);
+volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit, struct UnitData *ud);
 void GoOnline(struct UnitData *ud);
 void GoOffline(struct UnitData *ud);
 void GetHwAddress(struct UnitData *ud);
@@ -724,7 +726,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
     DBG("InitializeUnit() called.");
     if ((ud = AllocMem(sizeof(struct UnitData), MEMF_PUBLIC | MEMF_CLEAR)))
     {
-        if ((ud->ud_Hardware = FindHardware(dd, unit)))
+        if ((ud->ud_Hardware = FindHardware(dd, unit, ud)))
         {
 #ifdef PDEBUG
             ud->debug = dd->debug;
@@ -736,6 +738,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
                 ud->ud_EtherAddress[i] = 0x00;
             }
             ud->ud_SysBase = dd->dd_SysBase;
+            ud->ud_OpenPciBase = dd->dd_OpenPciBase;
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
             strcpy(ud->ud_Name, "openpci-rtl8029.device (x)");
@@ -1049,6 +1052,7 @@ LONG IntCode(register struct UnitData *ud reg(a1))
 LONG InstallInterrupt(struct UnitData *ud)
 {
     USE_U(SysBase)
+    USE_U(OpenPciBase);
     struct Interrupt *intr;
 
     if ((intr = AllocMem(sizeof(struct Interrupt), MEMF_PUBLIC | MEMF_CLEAR)))
@@ -1057,7 +1061,7 @@ LONG InstallInterrupt(struct UnitData *ud)
         intr->is_Node.ln_Name = ud->ud_Name;
         intr->is_Data = ud;
         intr->is_Code = (APTR)IntCode;
-        AddIntServer(INTB_PORTS, intr);
+        pci_add_intserver(intr, ud->ud_PciDev);
         ud->ud_Interrupt = intr;
         return TRUE;
     }
@@ -1070,8 +1074,9 @@ LONG InstallInterrupt(struct UnitData *ud)
 void RemoveInterrupt(struct UnitData *ud)
 {
     USE_U(SysBase)
+    USE_U(OpenPciBase)
 
-    RemIntServer(INTB_PORTS, ud->ud_Interrupt);
+    pci_rem_intserver(ud->ud_Interrupt, ud->ud_PciDev);
     FreeMem(ud->ud_Interrupt, sizeof(struct Interrupt));
     return;
 }
@@ -1079,7 +1084,7 @@ void RemoveInterrupt(struct UnitData *ud)
 ///
 /// FindHardware()
 
-volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit)
+volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit, struct UnitData *ud)
 {
     USE(OpenPciBase)
     WORD u = unit;
@@ -1106,6 +1111,7 @@ volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit)
 
     if (board)
     {
+        ud->ud_PciDev = board;
         tags[0].ti_Tag = PRM_MemoryAddr0;
         tags[0].ti_Data = (LONG)&hwbase;
         tags[1].ti_Tag = TAG_END;
