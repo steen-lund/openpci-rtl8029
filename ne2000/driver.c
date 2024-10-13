@@ -56,10 +56,6 @@
 #define USE(a) struct Library *a = dd->dd_##a;
 #define USE_U(a) struct Library *a = ud->ud_##a;
 
-// Debug on/off switch (debug off if commented).
-
-#define PDEBUG 1
-
 // Macros for debug messages.
 
 #ifdef PDEBUG
