@@ -1,0 +1,56 @@
+{
+    "configurations": [
+        {
+            "name": "Amiga",
+            "includePath": [
+                "/opt/amiga/m68k-amigaos/ndk-include/**",
+                "/opt/amiga/m68k-amigaos/include/**"
+            ],
+            "defines": [
+                "__GNUC__",
+                "__AMIGA__",
+                "__AMIGADATE__=TODAY"
+            ],
+            "intelliSenseMode": "gcc-x86",
+            "compilerPath": "/opt/amiga/bin/m68k-amigaos-gcc",
+            "compilerArgs": [
+                "-std=c99"
+            ],
+            "cStandard": "c99",
+            "browse": {
+                "path": [
+                    "/opt/amiga/m68k-amigaos/ndk-include/**",
+                    "/opt/amiga/m68k-amigaos/include/**"
+                ]
+            },
+            "configurationProvider": "ms-vscode.makefile-tools"
+        },
+        {
+            "name": "Amiga Debug",
+            "includePath": [
+                "/opt/amiga/m68k-amigaos/ndk-include/**",
+                "/opt/amiga/m68k-amigaos/include/**"
+            ],
+            "defines": [
+                "__GNUC__",
+                "__AMIGA__",
+                "__AMIGADATE__=TODAY",
+                "PDEBUG=1"
+            ],
+            "intelliSenseMode": "gcc-x86",
+            "compilerPath": "/opt/amiga/bin/m68k-amigaos-gcc",
+            "compilerArgs": [
+                "-std=c99"
+            ],
+            "cStandard": "c99",
+            "browse": {
+                "path": [
+                    "/opt/amiga/m68k-amigaos/ndk-include/**",
+                    "/opt/amiga/m68k-amigaos/include/**"
+                ]
+            },
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}
