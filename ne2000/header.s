@@ -33,12 +33,3 @@ _tagend:
             .align      2
 _devname:   .string     "openpci-rtl8029.device"
 
-
-/* CopyB(APTR function_ptr, APTR dest, APTR src, ULONG len) */
-
-            .align      2
-
-_CopyB:     MOVE.L      a2,-(sp)
-            JSR         (a2)
-            MOVE.L      (sp)+,a2
-            RTS
