@@ -168,25 +168,26 @@ struct UnitData
 #endif
 };
 
+typedef BOOL (*BuffFunc)(register APTR to reg(a0), register APTR from reg(a1), register ULONG n reg(d0));
+
 struct BuffFunctions
 {
-    APTR bf_CopyTo;
-    APTR bf_CopyFrom;
+    BuffFunc bf_CopyTo;
+    BuffFunc bf_CopyFrom;
 };
 
 ///
 /// prototypes
 
-extern LONG CopyB(APTR func reg(a2), APTR to reg(a0), APTR from reg(a1), ULONG n reg(d0));
 
-struct DevData *DevInit(void *seglist reg(a0), struct Library *sysb reg(a6));
-LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d1),
-             struct DevData *dd reg(a6));
-APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
-APTR DevExpunge(struct DevData *dd reg(a6));
+struct DevData *DevInit(register void *seglist reg(a0), register struct Library *sysb reg(a6));
+LONG DevOpen(register struct IOSana2Req *req reg(a1), register LONG unit reg(d0), register LONG flags reg(d1),
+             register struct DevData *dd reg(a6));
+APTR DevClose(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6));
+APTR DevExpunge(register struct DevData *dd reg(a6));
 LONG DevReserved(void);
-void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
-ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6));
+void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6));
+ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6));
 
 void IoDone(struct UnitData *ud, struct IOSana2Req *req, LONG err, LONG werr);
 LONG OpenDeviceLibraries(struct DevData *dd);
@@ -267,7 +268,7 @@ unsigned char *strcpy(unsigned char *dest, const unsigned char *src)
 // Called when the device is loaded into memory. Makes system library, initializes Library structure, opens
 // libraries used by the device. Returns device base or NULL if init failed.
 
-struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
+struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *sysb reg(a6))
 {
     struct DevData *dd;
     struct Library *SysBase = sysb;
@@ -309,8 +310,8 @@ struct DevData *DevInit(APTR seglist reg(a0), struct Library *sysb reg(a6))
 ///
 /// DevOpen()
 
-LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d1),
-             struct DevData *dd reg(a6))
+LONG DevOpen(register struct IOSana2Req *req reg(a1), register LONG unit reg(d0), register LONG flags reg(d1),
+             register struct DevData *dd reg(a6))
 {
     struct UnitData *ud;
 
@@ -345,7 +346,7 @@ LONG DevOpen(struct IOSana2Req *req reg(a1), LONG unit reg(d0), LONG flags reg(d
 ///
 /// DevClose()
 
-APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
+APTR DevClose(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6))
 {
     USE(SysBase)
 
@@ -367,7 +368,7 @@ APTR DevClose(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 ///
 /// DevExpunge()
 
-APTR DevExpunge(struct DevData *dd reg(a6))
+APTR DevExpunge(register struct DevData *dd reg(a6))
 {
     USE(SysBase)
     APTR seglist;
@@ -396,7 +397,7 @@ LONG DevReserved(void)
 ///
 /// DevBeginIo()
 
-void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
+void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6))
 {
     USE(SysBase)
     struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
@@ -458,7 +459,7 @@ void DevBeginIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
 ///
 /// DevAbortIo()
 
-ULONG DevAbortIO(struct IOSana2Req *req reg(a1), struct DevData *dd reg(a6))
+ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevData *dd reg(a6))
 {
     USE(SysBase)
     LONG ret = 0;
@@ -980,7 +981,7 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 
 /// IntCode()
 
-LONG IntCode(struct UnitData *ud reg(a1))
+LONG IntCode(register struct UnitData *ud reg(a1))
 {
     USE_U(SysBase)
     UBYTE intstatus;
@@ -1024,8 +1025,7 @@ LONG IntCode(struct UnitData *ud reg(a1))
                         offset = 0;
                     else
                         offset = 7;
-                    CopyB(((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo,
-                          req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
+                    ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo(req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
                     CopyMem(&ud->ud_RxBuffer[0], req->ios2_DstAddr, 6);
                     CopyMem(&ud->ud_RxBuffer[3], req->ios2_SrcAddr, 6);
                     req->ios2_DataLength = len - (offset << 1);
@@ -1336,8 +1336,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     /* Copy data from network stack using supplied CopyFrom() function. */
 
-    CopyB(((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom,
-          datapointer, req->ios2_Data, data_len);
+    ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom(datapointer, req->ios2_Data, data_len);
 
     /* Now we need length of data to send to hardware. IORequest ios2_DataLength does not include header   */
     /* length if packet is not RAW. So we sholud add it.                                                   */
