@@ -1135,7 +1135,7 @@ void HardwareInit(struct UnitData *ud)
 {
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
-    hw->regs[NE2000_COMMAND] = 0x21;
+    hw->regs[NE2000_COMMAND] = 0x21; // COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP
     hw->regs[NE2000_DATA_CONFIG] = DTCFG_FIFO_8 | DTCFG_WIDE | DTCFG_LOOPSEL;
     hw->regs[NE2000_DMA_COUNTER0] = 0;
     hw->regs[NE2000_DMA_COUNTER1] = 0;
@@ -1145,7 +1145,7 @@ void HardwareInit(struct UnitData *ud)
     hw->regs[NE2000_BOUNDARY] = BUFFER_END - 1;
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     hw->regs[NE2000_INT_MASK] = 0x00;
-    hw->regs[NE2000_COMMAND] = 0x61;
+    hw->regs[NE2000_COMMAND] = 0x61; // COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
     hw->regs[NE2000_COMMAND] = 0x21;
     return;
@@ -1399,7 +1399,7 @@ void GetHwAddress(struct UnitData *ud)
     hw->regs[NE2000_DMA_COUNTER1] = 0;
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = 0;
-    hw->regs[NE2000_COMMAND] = COMMAND_READ;
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_READ;
     for (i = 0; i < 6; i++)
         ud->ud_EtherAddress[i] = hw->DMAPort;
 
