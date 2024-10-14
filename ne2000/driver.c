@@ -146,7 +146,9 @@ struct UnitData
     struct MsgPort *ud_TaskPort;
     struct MsgPort *ud_LifeTime;
     struct MinList ud_RxQueue;
+    struct SignalSemaphore ud_RxSem;
     struct MinList ud_TxQueue;
+    struct SignalSemaphore ud_TxSem;
     struct IOSana2Req *ud_PendingWrite;
     struct pci_dev* ud_PciDev;
     ULONG ud_OpenCnt;
@@ -463,6 +465,7 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
     LONG ret = 0;
     struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     struct MinList *list;
+    struct SignalSemaphore *sem;
     struct MinNode *node;
 
     DBG1("DevAbortIo: aborting $%08lx.", req);
@@ -470,11 +473,13 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
     {
     case CMD_READ:
         list = &ud->ud_RxQueue;
+        sem = &ud->ud_RxSem;
         break;
 
     case CMD_WRITE:
     case S2_BROADCAST:
         list = &ud->ud_TxQueue;
+        sem = &ud->ud_TxSem;
         break;
 
     default:
@@ -482,7 +487,7 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
     }
     if (list)
     {
-        Disable();
+        ObtainSemaphore(sem);
         for (node = list->mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             if (node == (struct MinNode *)req)
@@ -496,7 +501,7 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
                 }
             }
         }
-        Enable();
+        ReleaseSemaphore(sem);
     }
     else
         ret = IOERR_NOCMD;
@@ -742,9 +747,15 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
             ud->ud_RxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_RxQueue.mlh_Head;
+
+            InitSemaphore(&ud->ud_RxSem);
+
             ud->ud_TxQueue.mlh_Head = (struct MinNode *)&ud->ud_TxQueue.mlh_Tail;
             ud->ud_TxQueue.mlh_Tail = NULL;
             ud->ud_TxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_TxQueue.mlh_Head;
+
+            InitSemaphore(&ud->ud_TxSem);
+
             ud->ud_NextPage = RX_BUFFER;
             HardwareReset(ud);
             HardwareInit(ud);
@@ -1460,6 +1471,8 @@ struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue,
     struct Library *SysBase = ud->ud_SysBase;
     struct IOSana2Req *req, *found = NULL;
 
+    ObtainSemaphore(&ud->ud_RxSem);
+
     for (req = (struct IOSana2Req *)queue->mlh_Head;
          req->ios2_Req.io_Message.mn_Node.ln_Succ;
          req = (struct IOSana2Req *)req->ios2_Req.io_Message.mn_Node.ln_Succ)
@@ -1471,6 +1484,9 @@ struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue,
             break;
         }
     }
+
+    ReleaseSemaphore(&ud->ud_RxSem);
+
     return found;
 }
 
@@ -1482,27 +1498,27 @@ void FlushQueues(struct UnitData *ud)
     USE_U(SysBase)
     struct IOSana2Req *xreq;
 
+    ObtainSemaphore(&ud->ud_RxSem);
     for (;;)
     {
-        Disable();
         xreq = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_RxQueue);
-        Enable();
         if (!xreq)
             break;
         DBG1_T("<- READ [$08%lx] [F].", xreq);
         IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
     }
+    ReleaseSemaphore(&ud->ud_RxSem);
 
+    ObtainSemaphore(&ud->ud_TxSem);
     for (;;)
     {
-        Disable();
         xreq = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
-        Enable();
         if (!xreq)
             break;
         DBG1_T("<- WRITE [$08%lx] [F].", xreq);
         IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
     }
+    ReleaseSemaphore(&ud->ud_TxSem);
     return;
 }
 
@@ -1534,9 +1550,9 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
         if (signals & ud->ud_GoWriteMask)
         {
             DBG_T("GoWrite");
-            Disable();
+            ObtainSemaphore(&ud->ud_TxSem);
             req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
-            Enable();
+            ReleaseSemaphore(&ud->ud_TxSem);
             ud->ud_PendingWrite = req;
             if (req)
                 SendPacket(ud, req);
@@ -1559,9 +1575,9 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                 {
                 case CMD_READ:
                     DBG1_T("-> READ [$%08lx].", req);
-                    Disable();
+                    ObtainSemaphore(&ud->ud_RxSem);
                     AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
-                    Enable();
+                    ReleaseSemaphore(&ud->ud_RxSem);
                     break;
 
                 case S2_BROADCAST:
@@ -1569,9 +1585,9 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                     DBG1_T("-> WRITE [$%08lx].", req);
                     if (ud->ud_PendingWrite)
                     {
-                        Disable();
+                        ObtainSemaphore(&ud->ud_TxSem);
                         AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
-                        Enable();
+                        ReleaseSemaphore(&ud->ud_TxSem);
                     }
                     else
                     {
