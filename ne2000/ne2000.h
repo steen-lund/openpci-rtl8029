@@ -15,6 +15,8 @@
 #define COMMAND_WRITE   0x10
 #define COMMAND_SEND    0x18
 #define COMMAND_ABORT   0x20
+#define COMMAND_UNUSED2 0x10  // Not used in the driver
+#define COMMAND_UNUSED1 0x08  // Not used in the driver
 #define COMMAND_TXP     0x04
 #define COMMAND_START   0x02
 #define COMMAND_STOP    0x01

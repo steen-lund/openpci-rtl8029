@@ -74,9 +74,11 @@
   #define DBG2_T(a,b,c) KPrintf(ud->tdebug, a "\n",(LONG)b,(LONG)c)*/
 
 #define DBG(a) KPrintF(a "\n")
+#define DBG_NONEWLINE(a) KPrintF(a)
 #define DBG_U(a) KPrintF(a "\n")
 #define DBG_T(a) KPrintF(a "\n")
 #define DBG1(a, b) KPrintF(a "\n", (LONG)b)
+#define DBG1_W_NONEWLINE(a, b) KPrintF(a , (WORD)b)
 #define DBG1_U(a, b) KPrintF(a "\n", (LONG)b)
 #define DBG1_T(a, b) KPrintF(a "\n", (LONG)b)
 #define DBG2(a, b, c) KPrintF(a "\n", (LONG)b, (LONG)c)
@@ -1233,7 +1235,6 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
         ULONG l;   // 32-bit access to 16-bit data
         UWORD w[2];
     } hdr;
- 
 
     ne->regs[NE2000_DMA_COUNTER0] = 4;
     ne->regs[NE2000_DMA_COUNTER1] = 0;
@@ -1242,13 +1243,21 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
     hdr.w[0] = ne->DMAPort;
     hdr.w[1] = ne->DMAPort;
+
+#if PDEBUG
+    /* Ignore multicast packets*/
+    if (!(hdr.w[0] & 0x2000))
+        DBG1("GetPacketHeader(): header = $%08lx.", hdr.l);
+
+#endif
+
     return hdr.l;
 }
 
 ///
 /// GetPacket()
 
-void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer)
+void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer, BOOL print)
 {
     UWORD count;
 
@@ -1260,8 +1269,13 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 
     for (count = (len + 1) >> 1; count; count--)
     {
-        *buffer++ = ne->DMAPort;
+        *buffer = ne->DMAPort;
+        if (print)
+            DBG1_W_NONEWLINE("%04x", *buffer);
+        ++buffer;
     }
+    if (print)
+        DBG("");    
     return;
 }
 
@@ -1273,10 +1287,17 @@ LONG PacketReceived(struct UnitData *ud)
     ULONG header, len;
 
     header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage);
+    BOOL mc = (header & 0x20000000) != 0;
+    if (!mc)
+        DBG1("Header: $%08lx.", header);
     len = swapw(header & 0xFFFF);
-    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer);
+    if (!mc)
+        DBG1("Packet length: %ld.", len);
+    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, !mc);
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage;
     ud->ud_NextPage = (header >> 16) & 0xFF;
+    if (!mc)
+        DBG1("Next page: $%02lx.", ud->ud_NextPage);
     ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
     return len;
 }
@@ -1289,6 +1310,8 @@ void BufferOverflow(struct UnitData *ud)
     struct Library *DOSBase = ud->ud_DOSBase;
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE txp, resent = FALSE, intstatus;
+
+    DBG_U("Overflow detected.");
 
     txp = hw->regs[NE2000_COMMAND] & COMMAND_TXP;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;

@@ -6,7 +6,7 @@ STRIP = $(TOOLPREFIX)strip
 TARGET  = openpci-rtl8029.device
 VERSION = 2.0
 
-RELEASE = 1
+RELEASE = 0
 
 ifeq ($(RELEASE),1)
 	OPTIMIZE = -O2
