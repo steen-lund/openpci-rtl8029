@@ -1380,11 +1380,11 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
         data_len += 14;
 
-    /* Packet sent to Ethernet hadrware should be at least 60 bytes long (4 bytes of CRC will be appended  */
-    /* by hardware giving 64 bytes). If our packet is shorter we should extend it with spaces.             */
+    /* Packet sent to Ethernet hardware should be at least 60 bytes long (4 bytes of CRC will be appended  */
+    /* by hardware giving 64 bytes). If our packet is shorter we should extend it with zeros.             */
 
     while (data_len < 60)
-        ethbuffer[data_len++] = ' ';
+        ethbuffer[data_len++] = 0;
 
     /* Now the packet is ready to send it to NIC buffer. It is done by Remote Write DMA command. Firstly   */
     /* write addres and counter should be initialized, then command register.                              */
