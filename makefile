@@ -4,6 +4,7 @@ CC    = $(TOOLPREFIX)gcc
 STRIP = $(TOOLPREFIX)strip
 
 TARGET  = openpci-rtl8029.device
+CLIENT_TARGET = client
 VERSION = 2.0
 
 RELEASE = 0
@@ -30,8 +31,12 @@ SRCS = driver.c __divsi3.c __udivsi3.c header.s
 OBJS = $(addprefix obj/,$(SRCS:%=%.o))
 DEPS = $(OBJS:.o=.d)
 
-.PHONY: all
-all: bin/$(TARGET)
+# Client source files
+CLIENT_SRCS = AmigaOS/src/client.c
+CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
+
+.PHONY: all clean
+all: bin/$(TARGET) bin/$(CLIENT_TARGET)
 
 -include $(DEPS)
 
@@ -50,7 +55,13 @@ bin/$(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@.debug $^ $(LIBS)
 	$(STRIP) $(STRIPFLAGS) -o $@ $@.debug
 
-.PHONY: clean
+bin/$(CLIENT_TARGET): $(CLIENT_OBJS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 clean:
 	rm -rf bin obj
-
+	rm -f $(CLIENT_OBJS) bin/$(CLIENT_TARGET)
