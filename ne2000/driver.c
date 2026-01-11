@@ -36,6 +36,9 @@
 #define BUFFER_END  0x80
 #define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR | INT_OVERFLOW)
 
+/* Cache control flags for hardware I/O */
+#define CACRF_ClearD    (1UL<<11)  /* Clear data cache */
+
 /* PCI card ID's */
 
 #define PCI_VENDOR_REALTEK 0x10EC
@@ -265,6 +268,15 @@ unsigned char *strcpy(unsigned char *dest, const unsigned char *src)
         *dest++ = *src++;
     *dest = 0;
     return d;
+}
+
+/* Helper function to ensure cache coherency for hardware writes */
+static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct Library *SysBase)
+{
+    /* Flush data cache to ensure all writes reach hardware immediately */
+    if (SysBase) {
+        CacheClearE((APTR)hw, sizeof(struct Ne2000), CACRF_ClearD);
+    }
 }
 
 /// DevInit()
@@ -1167,6 +1179,7 @@ void HardwareInit(struct UnitData *ud)
     hw->regs[NE2000_COMMAND] = 0x61; // COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
     hw->regs[NE2000_COMMAND] = 0x21;
+    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure hardware init registers reach hardware */
     return;
 }
 
@@ -1202,6 +1215,7 @@ void GoOnline(struct UnitData *ud)
                                  ((ud->ud_Flags & UF_PROMISCUOUS) ? RXCFG_PROM : 0);
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     hw->regs[NE2000_INT_MASK] = INTMASK;
+    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure interrupt mask reaches hardware */
 
     return;
 }
@@ -1251,6 +1265,7 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
     ne->regs[NE2000_DMA_START_ADDR0] = 0;
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
+    /* Note: Read operations implicitly wait for hardware, no explicit barrier needed */
     hdr.w[0] = ne->DMAPort;
     hdr.w[1] = ne->DMAPort;
 
@@ -1276,6 +1291,7 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     ne->regs[NE2000_DMA_START_ADDR0] = 4;
     ne->regs[NE2000_DMA_START_ADDR1] = startpage;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
+    /* Note: Read operations implicitly wait for hardware, no explicit barrier needed */
 
     for (count = (len + 1) >> 1; count; count--)
     {
@@ -1406,6 +1422,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_WRITE;
+    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure DMA setup reaches hardware before data transfer */
 
     /* Now we can send packet data to DMAPort word by word.                                                */
 
@@ -1427,6 +1444,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* Three, two, one, go! */
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_ABORT | COMMAND_TXP;
+    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure transmit command reaches hardware */
 
     /* OK. Packet was sent (succesfully or not). Hardware will respond with TXPACKET or TXERROR interrupt  */
     /* then we will be able to reply IORequest in the interrupt server.                                    */
