@@ -116,6 +116,14 @@ extern struct Library *MMUBase;
 #define DBG2_T(a, b, c)
 #endif
 
+/* Initialization debug macros - always enabled for important startup messages */
+/* These use KPrintF for serial debug output, independent of PDEBUG setting */
+#include <clib/debug_protos.h>
+#define INIT_DBG(a) KPrintF(a "\n")
+#define INIT_DBG1(a,b) KPrintF(a "\n",(LONG)b)
+#define INIT_DBG_U(a) KPrintF(a "\n")
+#define INIT_DBG1_U(a,b) KPrintF(a "\n",(LONG)b)
+
 // New Style Device support
 
 #define NSCMD_DEVICEQUERY 0x4000
@@ -321,12 +329,12 @@ static BOOL setup_cache_inhibited_hw(struct UnitData *ud)
         if (SetProperties(NULL, MAPP_CACHEINHIBIT, MAPP_CACHEINHIBIT,
                          hw_addr, hw_size, TAG_DONE))
         {
-            DBG_U("Hardware region marked as cache-inhibited via mmu.library");
+            INIT_DBG_U("Hardware region marked as cache-inhibited via mmu.library");
             return TRUE;
         }
         else
         {
-            DBG_U("Warning: Failed to set cache-inhibit via mmu.library, will use cache flush");
+            INIT_DBG_U("Warning: Failed to set cache-inhibit via mmu.library, will use cache flush");
         }
     }
     return FALSE;
@@ -366,7 +374,7 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
 /*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
 #endif
 
-            DBG1("Device initialized, base at $%08lx.", dd);
+            INIT_DBG1("Device initialized, base at $%08lx.", dd);
             AddDevice((struct Device *)dd);
             return dd;
         }
@@ -616,11 +624,11 @@ LONG OpenDeviceLibraries(struct DevData *dd)
     dd->dd_MMUBase = OpenLibrary("mmu.library", 39);
     if (dd->dd_MMUBase)
     {
-        DBG("mmu.library opened - will use cache-inhibited I/O mapping");
+        INIT_DBG("mmu.library opened - will use cache-inhibited I/O mapping");
     }
     else
     {
-        DBG("mmu.library not available - will use cache flush method");
+        INIT_DBG("mmu.library not available - will use cache flush method");
     }
 
     return TRUE;
@@ -849,7 +857,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             if (RunTask(dd, ud))
             {
                 dd->dd_Units[unit] = ud;
-                DBG1("%s initialized.", (LONG)ud->ud_Name);
+                INIT_DBG1_U("%s initialized.", (LONG)ud->ud_Name);
                 return ud;
             }
         }
@@ -1540,11 +1548,10 @@ void GetHwAddress(struct UnitData *ud)
     for (i = 0; i < 6; i++)
         ud->ud_EtherAddress[i] = hw->DMAPort;
 
-#ifdef PDEBUG
-    DBG_U("\thardware address (read):");
+    /* Always display hardware address on initialization */
+    INIT_DBG_U("Hardware address (read):");
     for (i = 0; i < 6; i++)
-        DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
-#endif
+        INIT_DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
 
     return;
 }

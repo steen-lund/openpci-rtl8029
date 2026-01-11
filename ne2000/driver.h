@@ -26,6 +26,13 @@
 /* Macros for debug messages. Replace FPrintf() with KPrintf() */
 /* if you want traditional serial terminal debug output.       */
 
+/* Initialization debug macros - always enabled for important startup messages */
+/* These use KPrintf for serial debug output, independent of PDEBUG setting */
+#define INIT_DBG(a) KPrintf(a "\n")
+#define INIT_DBG1(a,b) KPrintf(a "\n",(LONG)b)
+#define INIT_DBG_U(a) KPrintf(a "\n")
+#define INIT_DBG1_U(a,b) KPrintf(a "\n",(LONG)b)
+
 #ifdef PDEBUG
   #define USE_D(a) struct Library *##a = dd->dd_##a;
   #define USE_UD(a) struct Library *##a = ud->ud_##a;
