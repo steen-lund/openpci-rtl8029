@@ -25,25 +25,23 @@
 
 /*#include <faststring.h>*/ /* Probably used for strcpy */
 
-/* Optional: mmu.library for cache-inhibited hardware mapping */
-#ifdef __has_include
-#  if __has_include(<clib/mmu_protos.h>)
-#    include <clib/mmu_protos.h>
-#    include <inline/mmu.h>
-#    include <mmu/context.h>
-#    define HAVE_MMU_LIBRARY 1
-#  endif
-#else
-/* Assume mmu.library headers exist for older compilers */
-#  include <clib/mmu_protos.h>
-#  include <inline/mmu.h>
-#  include <mmu/context.h>
-#  define HAVE_MMU_LIBRARY 1
-#endif
-
 #include "rev.h"
 #include "ne2000.h"
 // #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
+
+/* mmu.library for cache-inhibited hardware mapping */
+/* Note: proto/mmu.h in the installed NDK is malformed, so we replicate */
+/* what a correct proto/mmu.h should do for GCC with inline stubs */
+#ifndef __NOLIBBASE__
+extern struct Library *MMUBase;
+#endif
+#include <clib/mmu_protos.h>
+#if defined(__GNUC__)
+#include <inline/mmu.h>
+#else
+#include <pragmas/mmu_pragmas.h>
+#endif
+#include <mmu/context.h>
 
 #define OK 0
 
@@ -310,9 +308,11 @@ static BOOL setup_cache_inhibited_hw(struct UnitData *ud)
     if (ud->ud_MMUBase)
     {
         /* MMU library is available - mark hardware region as cache-inhibited */
-        struct Library *MMUBase = ud->ud_MMUBase;
         ULONG hw_addr = (ULONG)ud->ud_Hardware;
         ULONG hw_size = sizeof(struct Ne2000);
+
+        /* SetProperties requires MMUBase to be set for the inline call */
+        struct Library *MMUBase = ud->ud_MMUBase;
 
         /* SetProperties(context, flags, mask, address, size, tags...)
          * context = NULL means current context

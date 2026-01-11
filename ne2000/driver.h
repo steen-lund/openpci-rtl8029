@@ -2,7 +2,7 @@
 
 /* Main option switches */
 
-#define PDEBUG         1  /* Debug on/off switch (debug off if commented). */
+#define PDEBUG         0  /* Debug on/off switch (debug off if commented). */
 #define USE_TASK       1  /* Uncomment if unit runs own task.              */
 #define USE_INTERRUPT  1  /* Uncomment if unit uses interrupt.             */
 
