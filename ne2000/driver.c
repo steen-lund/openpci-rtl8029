@@ -219,6 +219,7 @@ void GetHwAddress(struct UnitData *ud);
 void WriteHwAddress(struct UnitData *ud);
 LONG PacketReceived(struct UnitData *ud);
 LONG RingBufferNotEmpty(struct UnitData *ud);
+void BufferOverflow(struct UnitData *ud);
 
 struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue, ULONG type);
 void UnitTask(void);
