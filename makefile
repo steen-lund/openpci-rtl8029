@@ -35,8 +35,10 @@ DEPS = $(OBJS:.o=.d)
 CLIENT_SRCS = AmigaOS/src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
 
-.PHONY: all clean
+.PHONY: all driver client clean
 all: bin/$(TARGET) bin/$(CLIENT_TARGET)
+driver: bin/$(TARGET)
+client: bin/$(CLIENT_TARGET)
 
 -include $(DEPS)
 
