@@ -34,7 +34,7 @@
 #define TX_BUFFER   0x40
 #define RX_BUFFER   0x46
 #define BUFFER_END  0x80
-#define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR)
+#define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR | INT_OVERFLOW)
 
 /* PCI card ID's */
 
@@ -1018,6 +1018,13 @@ LONG IntCode(register struct UnitData *ud reg(a1))
             ud->ud_DevStats.PacketsSent++;
             IoDone(ud, req, OK, OK);
             Signal(ud->ud_Task, ud->ud_GoWriteMask);
+            my_int = 1;
+        }
+
+        if (intstatus & INT_OVERFLOW)
+        {
+            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
+            BufferOverflow(ud);
             my_int = 1;
         }
 
