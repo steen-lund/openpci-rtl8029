@@ -75,7 +75,7 @@ extern struct Library *MMUBase;
 
 // Macros for debug messages.
 
-#ifdef PDEBUG
+#if PDEBUG
 #include <proto/debug.h>
 
 #define USE_D(a) struct Library* a = dd->dd_##a;
@@ -106,9 +106,11 @@ extern struct Library *MMUBase;
 #define USE_D(a)
 #define USE_UD(a)
 #define DBG(a)
+#define DBG_NONEWLINE(a)
 #define DBG_U(a)
 #define DBG_T(a)
 #define DBG1(a, b)
+#define DBG1_W_NONEWLINE(a, b)
 #define DBG1_U(a, b)
 #define DBG1_T(a, b)
 #define DBG2(a, b, c)
