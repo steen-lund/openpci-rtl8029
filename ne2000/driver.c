@@ -1407,6 +1407,12 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     for (cycles = (data_len + 1) >> 1; cycles; cycles--)
         hw->DMAPort = *ethdata++;
 
+    /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
+
+    while (!(hw->regs[NE2000_INT_STATUS] & INT_DMAFINISH))
+        ;
+    hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH;
+
     /* Send packet to the wire. Register setup first.                                                      */
 
     hw->regs[NE2000_TX_PAGE_START] = TX_BUFFER;
