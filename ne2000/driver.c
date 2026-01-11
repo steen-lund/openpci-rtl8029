@@ -1292,6 +1292,7 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 LONG PacketReceived(struct UnitData *ud)
 {
     ULONG header, len;
+    UBYTE next_page;
 
     header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage);
     BOOL mc = (header & 0x20000000) != 0;
@@ -1300,11 +1301,12 @@ LONG PacketReceived(struct UnitData *ud)
     len = swapw(header & 0xFFFF);
     if (!mc)
         DBG1("Packet length: %ld.", len);
+    next_page = (header >> 16) & 0xFF;
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, !mc);
-    ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage;
-    ud->ud_NextPage = (header >> 16) & 0xFF;
+    ud->ud_NextPage = next_page;
     if (!mc)
         DBG1("Next page: $%02lx.", ud->ud_NextPage);
+    ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage == RX_BUFFER ? BUFFER_END - 1 : ud->ud_NextPage - 1;
     ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
     return len;
 }
