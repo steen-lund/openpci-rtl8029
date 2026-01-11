@@ -25,6 +25,22 @@
 
 /*#include <faststring.h>*/ /* Probably used for strcpy */
 
+/* Optional: mmu.library for cache-inhibited hardware mapping */
+#ifdef __has_include
+#  if __has_include(<clib/mmu_protos.h>)
+#    include <clib/mmu_protos.h>
+#    include <inline/mmu.h>
+#    include <mmu/context.h>
+#    define HAVE_MMU_LIBRARY 1
+#  endif
+#else
+/* Assume mmu.library headers exist for older compilers */
+#  include <clib/mmu_protos.h>
+#  include <inline/mmu.h>
+#  include <mmu/context.h>
+#  define HAVE_MMU_LIBRARY 1
+#endif
+
 #include "rev.h"
 #include "ne2000.h"
 // #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
@@ -129,6 +145,7 @@ struct DevData
     struct Library *dd_UtilityBase;
     struct Library *dd_DOSBase;
     struct Library *dd_TimerBase;
+    struct Library *dd_MMUBase;  /* Optional: for cache-inhibited I/O mapping */
     struct UnitData *dd_Units[4];
     struct timerequest dd_Treq;
 
@@ -146,6 +163,7 @@ struct UnitData
     struct Library *ud_OpenPciBase;
     struct Library *ud_DOSBase;
     struct Library *ud_TimerBase;
+    struct Library *ud_MMUBase;  /* Optional: for cache-inhibited I/O mapping */
     struct Interrupt *ud_Interrupt;
     struct Task *ud_Task;
     struct MsgPort *ud_TaskPort;
@@ -166,7 +184,7 @@ struct UnitData
     UBYTE ud_Flags;
     UBYTE ud_NextPage;
     BYTE ud_GoWriteBit;
-    UBYTE pad;
+    UBYTE ud_UseMMUCacheInhibit;  /* TRUE if using MMU lib for cache-inhibit */
 #ifdef PDEBUG
     BPTR debug;
     BPTR tdebug;
@@ -271,12 +289,47 @@ unsigned char *strcpy(unsigned char *dest, const unsigned char *src)
 }
 
 /* Helper function to ensure cache coherency for hardware writes */
-static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct Library *SysBase)
+static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct UnitData *ud)
 {
-    /* Flush data cache to ensure all writes reach hardware immediately */
+    struct Library *SysBase;
+
+    /* If MMU library marked hardware as cache-inhibited, no flush needed */
+    if (ud->ud_UseMMUCacheInhibit)
+        return;
+
+    /* Fallback: Flush data cache to ensure all writes reach hardware immediately */
+    SysBase = ud->ud_SysBase;
     if (SysBase) {
         CacheClearE((APTR)hw, sizeof(struct Ne2000), CACRF_ClearD);
     }
+}
+
+/* Setup cache-inhibited mapping for hardware using MMU library (if available) */
+static BOOL setup_cache_inhibited_hw(struct UnitData *ud)
+{
+    if (ud->ud_MMUBase)
+    {
+        /* MMU library is available - mark hardware region as cache-inhibited */
+        struct Library *MMUBase = ud->ud_MMUBase;
+        ULONG hw_addr = (ULONG)ud->ud_Hardware;
+        ULONG hw_size = sizeof(struct Ne2000);
+
+        /* SetProperties(context, flags, mask, address, size, tags...)
+         * context = NULL means current context
+         * MAPP_CACHEINHIBIT = mark as cache-inhibited
+         */
+        if (SetProperties(NULL, MAPP_CACHEINHIBIT, MAPP_CACHEINHIBIT,
+                         hw_addr, hw_size, TAG_DONE))
+        {
+            DBG_U("Hardware region marked as cache-inhibited via mmu.library");
+            return TRUE;
+        }
+        else
+        {
+            DBG_U("Warning: Failed to set cache-inhibit via mmu.library, will use cache flush");
+        }
+    }
+    return FALSE;
 }
 
 /// DevInit()
@@ -559,6 +612,17 @@ LONG OpenDeviceLibraries(struct DevData *dd)
         dd->dd_TimerBase = (struct Library *)dd->dd_Treq.tr_node.io_Device;
     }
 
+    /* Try to open mmu.library - optional, for cache-inhibited hardware mapping */
+    dd->dd_MMUBase = OpenLibrary("mmu.library", 39);
+    if (dd->dd_MMUBase)
+    {
+        DBG("mmu.library opened - will use cache-inhibited I/O mapping");
+    }
+    else
+    {
+        DBG("mmu.library not available - will use cache flush method");
+    }
+
     return TRUE;
 }
 
@@ -577,6 +641,8 @@ void CloseDeviceLibraries(struct DevData *dd)
         CloseLibrary(dd->dd_UtilityBase);
     if (dd->dd_TimerBase)
         CloseDevice((struct IORequest *)&dd->dd_Treq);
+    if (dd->dd_MMUBase)
+        CloseLibrary(dd->dd_MMUBase);
 }
 
 ///
@@ -757,6 +823,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_OpenPciBase = dd->dd_OpenPciBase;
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
+            ud->ud_MMUBase = dd->dd_MMUBase;
             strcpy(ud->ud_Name, "openpci-rtl8029.device (x)");
             ud->ud_Name[24] = '0' + unit;
             ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
@@ -772,6 +839,10 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             InitSemaphore(&ud->ud_TxSem);
 
             ud->ud_NextPage = RX_BUFFER;
+
+            /* Try to setup cache-inhibited mapping via MMU library */
+            ud->ud_UseMMUCacheInhibit = setup_cache_inhibited_hw(ud);
+
             HardwareReset(ud);
             HardwareInit(ud);
             GetHwAddress(ud);
@@ -1179,7 +1250,7 @@ void HardwareInit(struct UnitData *ud)
     hw->regs[NE2000_COMMAND] = 0x61; // COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
     hw->regs[NE2000_COMMAND] = 0x21;
-    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure hardware init registers reach hardware */
+    hw_write_barrier(hw, ud);  /* Ensure hardware init registers reach hardware */
     return;
 }
 
@@ -1215,7 +1286,7 @@ void GoOnline(struct UnitData *ud)
                                  ((ud->ud_Flags & UF_PROMISCUOUS) ? RXCFG_PROM : 0);
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     hw->regs[NE2000_INT_MASK] = INTMASK;
-    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure interrupt mask reaches hardware */
+    hw_write_barrier(hw, ud);  /* Ensure interrupt mask reaches hardware */
 
     return;
 }
@@ -1422,7 +1493,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_WRITE;
-    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure DMA setup reaches hardware before data transfer */
+    hw_write_barrier(hw, ud);  /* Ensure DMA setup reaches hardware before data transfer */
 
     /* Now we can send packet data to DMAPort word by word.                                                */
 
@@ -1444,7 +1515,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* Three, two, one, go! */
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_ABORT | COMMAND_TXP;
-    hw_write_barrier(hw, ud->ud_SysBase);  /* Ensure transmit command reaches hardware */
+    hw_write_barrier(hw, ud);  /* Ensure transmit command reaches hardware */
 
     /* OK. Packet was sent (succesfully or not). Hardware will respond with TXPACKET or TXERROR interrupt  */
     /* then we will be able to reply IORequest in the interrupt server.                                    */
