@@ -1006,6 +1006,7 @@ LONG IntCode(register struct UnitData *ud reg(a1))
         {
             ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXERROR;
             req = ud->ud_PendingWrite;
+            ud->ud_PendingWrite = NULL;
             IoDone(ud, req, S2ERR_TX_FAILURE, S2WERR_TOO_MANY_RETIRES);
             Signal(ud->ud_Task, ud->ud_GoWriteMask);
             my_int = 1;
@@ -1015,6 +1016,7 @@ LONG IntCode(register struct UnitData *ud reg(a1))
         {
             ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXPACKET;
             req = ud->ud_PendingWrite;
+            ud->ud_PendingWrite = NULL;
             ud->ud_DevStats.PacketsSent++;
             IoDone(ud, req, OK, OK);
             Signal(ud->ud_Task, ud->ud_GoWriteMask);
