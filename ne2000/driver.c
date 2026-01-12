@@ -1453,7 +1453,7 @@ LONG PacketReceived(struct UnitData *ud)
     len = swapw(header & 0xFFFF);
     if (!mc)
         DBG1("Packet length: %ld.", len);
-    next_page = (header >> 8) & 0xFF;
+    next_page = (header >> 16) & 0xFF;
 
     /* Validate next_page is within ring buffer bounds (RX_BUFFER to BUFFER_END) */
     if (next_page < RX_BUFFER || next_page >= BUFFER_END)
