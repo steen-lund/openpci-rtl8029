@@ -215,11 +215,89 @@ int main(int argc, char *argv[])
 
 cleanup:
     printf("\n");
-    printf("Test complete: %d packets received, %d errors\n", packet_num, errors);
+    printf("RX test complete: %d packets received, %d errors\n", packet_num, errors);
+
+    // Define test sizes for TX (same as server)
+    const size_t tx_test_sizes[] = {
+        64, 100, 256, 512, 1024, 1518, 2048, 4096
+    };
+    size_t tx_num_tests = sizeof(tx_test_sizes) / sizeof(tx_test_sizes[0]);
+
+    printf("\nNow sending test packets to server...\n\n");
+
+    int tx_errors = 0;
+    for (size_t i = 0; i < tx_num_tests; i++) {
+        size_t size = tx_test_sizes[i];
+
+        // Create test buffer
+        char *test_buffer = malloc(size);
+        if (!test_buffer) {
+            printf("malloc failed\n");
+            tx_errors++;
+            break;
+        }
+
+        // Fill with pattern
+        snprintf(test_buffer, size, "SIZE:%zu:", size);
+        size_t header_len = strlen(test_buffer);
+        unsigned char pattern = 0x51 + (i % 26);  // 'Q' to 'Z' range
+        for (size_t j = header_len; j < size; j++) {
+            test_buffer[j] = pattern;
+        }
+
+        printf("TX Packet %zu/%zu: Sending %zu bytes (pattern: 0x%02X)...\n",
+               i + 1, tx_num_tests, size, pattern);
+
+        // Send length prefix
+        uint32_t net_size = htonl((uint32_t)size);
+        bytes_written = send(socket_fd, (char*)&net_size, sizeof(net_size), 0);
+        if (bytes_written < 0) {
+            PrintFault(IoErr(), "send length");
+            free(test_buffer);
+            tx_errors++;
+            break;
+        }
+
+        // Send data
+        size_t total_sent = 0;
+        while (total_sent < size) {
+            bytes_written = send(socket_fd, test_buffer + total_sent,
+                               size - total_sent, 0);
+            if (bytes_written < 0) {
+                PrintFault(IoErr(), "send data");
+                tx_errors++;
+                break;
+            }
+            total_sent += bytes_written;
+        }
+
+        free(test_buffer);
+
+        if (total_sent != size) {
+            printf("  ERROR: Only sent %zu of %zu bytes\n", total_sent, size);
+            tx_errors++;
+            continue;
+        }
+
+        // Wait for acknowledgment
+        bytes_read = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
+        if (bytes_read < 0) {
+            PrintFault(IoErr(), "recv ack");
+            tx_errors++;
+            break;
+        }
+        buffer[bytes_read] = '\0';
+        printf("  Server ACK: %s\n\n", buffer);
+    }
+
+    printf("\n");
+    printf("TX test complete: %zu packets sent, %d errors\n", tx_num_tests, tx_errors);
+    printf("\n");
+    printf("Overall: RX=%d errors, TX=%d errors\n", errors, tx_errors);
 
     CloseSocket(socket_fd);
     CloseLibrary(SocketBase);
     FreeArgs(rdargs);
 
-    return errors > 0 ? 1 : 0;
+    return (errors > 0 || tx_errors > 0) ? 1 : 0;
 }

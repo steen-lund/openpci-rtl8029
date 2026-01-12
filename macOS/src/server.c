@@ -202,7 +202,113 @@ int main()
         usleep(100000);  // 100ms
     }
 
-    printf("All test packets sent.\n");
+    printf("All test packets sent.\n\n");
+    printf("Now receiving test packets from client...\n\n");
+
+    // Receive test packets from client
+    int rx_packet_num = 0;
+    int rx_errors = 0;
+
+    while (1) {
+        // Read length prefix (4 bytes)
+        uint32_t net_size;
+        size_t total_read = 0;
+        while (total_read < sizeof(net_size)) {
+            bytes_read = read(client_socket_fd, ((char*)&net_size) + total_read,
+                            sizeof(net_size) - total_read);
+            if (bytes_read <= 0) {
+                if (bytes_read == 0) {
+                    if (total_read == 0) {
+                        printf("Client closed connection.\n");
+                        goto done;
+                    }
+                    printf("Connection closed mid-length!\n");
+                } else {
+                    perror("read length");
+                }
+                goto done;
+            }
+            total_read += bytes_read;
+        }
+
+        size_t expected_size = ntohl(net_size);
+        if (expected_size > BUFFER_SIZE - 1) {
+            printf("Packet too large: %zu bytes\n", expected_size);
+            rx_errors++;
+            break;
+        }
+
+        // Read the complete packet data
+        total_read = 0;
+        while (total_read < expected_size) {
+            bytes_read = read(client_socket_fd, buffer + total_read,
+                            expected_size - total_read);
+            if (bytes_read <= 0) {
+                if (bytes_read == 0) {
+                    printf("Connection closed mid-packet!\n");
+                } else {
+                    perror("read data");
+                }
+                goto done;
+            }
+            total_read += bytes_read;
+        }
+
+        rx_packet_num++;
+        buffer[total_read] = '\0';
+
+        // Parse and verify
+        size_t header_size = 0;
+        if (sscanf(buffer, "SIZE:%zu:", &header_size) == 1) {
+            printf("RX Packet %d: Received %zu bytes (expected %zu)\n",
+                   rx_packet_num, total_read, header_size);
+
+            if (total_read != expected_size || expected_size != header_size) {
+                printf("  ERROR: Size mismatch!\n");
+                rx_errors++;
+            } else {
+                // Verify pattern
+                size_t header_len = strlen("SIZE:") + strlen(":") + 10;  // Approximate
+                for (size_t i = 0; i < total_read && buffer[i] != '\0'; i++) {
+                    if (i > 0 && buffer[i-1] == ':') {
+                        header_len = i;
+                        break;
+                    }
+                }
+
+                int pattern_ok = 1;
+                if (header_len < total_read) {
+                    unsigned char expected_pattern = buffer[header_len];
+                    for (size_t i = header_len + 1; i < total_read; i++) {
+                        if ((unsigned char)buffer[i] != expected_pattern) {
+                            pattern_ok = 0;
+                            break;
+                        }
+                    }
+
+                    if (pattern_ok) {
+                        printf("  OK: Pattern verified (0x%02X)\n", expected_pattern);
+                    } else {
+                        printf("  ERROR: Pattern mismatch!\n");
+                        rx_errors++;
+                    }
+                }
+            }
+        }
+
+        // Send acknowledgment
+        char ack[32];
+        snprintf(ack, sizeof(ack), "RX-ACK:%d", rx_packet_num);
+        ssize_t bytes_written = write(client_socket_fd, ack, strlen(ack));
+        if (bytes_written < 0) {
+            perror("write ack");
+            break;
+        }
+    }
+
+done:
+    printf("\n");
+    printf("Client TX test complete: %d packets received, %d errors\n", rx_packet_num, rx_errors);
 
     close(client_socket_fd);
     close(socket_fd);

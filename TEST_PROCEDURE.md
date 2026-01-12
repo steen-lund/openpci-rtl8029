@@ -37,7 +37,7 @@
 
 ### Expected Output:
 
-The test will now perform a comprehensive packet size test:
+The test now performs a **comprehensive bidirectional** packet size test to verify both RX and TX paths:
 
 **Client Output:**
 ```
@@ -62,9 +62,22 @@ Packet 7: Received 2048 bytes (expected 2048)
   OK: Pattern verified (0x47)
 Packet 8: Received 4096 bytes (expected 4096)
   OK: Pattern verified (0x48)
-Connection closed by server.
 
-Test complete: 8 packets received, 0 errors
+RX test complete: 8 packets received, 0 errors
+
+Now sending test packets to server...
+
+TX Packet 1/8: Sending 64 bytes (pattern: 0x51)...
+  Server ACK: RX-ACK:1
+
+TX Packet 2/8: Sending 100 bytes (pattern: 0x52)...
+  Server ACK: RX-ACK:2
+
+[... continues for all 8 packet sizes ...]
+
+TX test complete: 8 packets sent, 0 errors
+
+Overall: RX=0 errors, TX=0 errors
 ```
 
 **Server Output:**
@@ -80,14 +93,30 @@ Sending test packet 1/8: 64 bytes (pattern: 0x41)...
 Sending test packet 2/8: 100 bytes (pattern: 0x42)...
   Client ACK: ACK:2
 
-[... continues for all packet sizes ...]
+[... continues for all 8 packet sizes ...]
 
 All test packets sent.
+
+Now receiving test packets from client...
+
+RX Packet 1: Received 64 bytes (expected 64)
+  OK: Pattern verified (0x51)
+
+RX Packet 2: Received 100 bytes (expected 100)
+  OK: Pattern verified (0x52)
+
+[... continues for all 8 packet sizes ...]
+
+Client closed connection.
+
+Client TX test complete: 8 packets received, 0 errors
 ```
 
 ### Test Coverage:
 
-The enhanced test verifies:
+The enhanced bidirectional test verifies:
+
+**Packet Sizes (both RX and TX):**
 - **64 bytes**: Minimum Ethernet payload
 - **100 bytes**: Small packet
 - **256 bytes**: Single NE2000 page
@@ -97,14 +126,26 @@ The enhanced test verifies:
 - **2048 bytes**: Large packet (TCP fragmentation)
 - **4096 bytes**: Very large packet (multiple TCP segments)
 
-Each packet contains:
-- Size header (e.g., "SIZE:1024:")
-- Repeating byte pattern for verification (A-Z pattern based on packet number)
+**RX Test (Server → Client):**
+- Server sends 8 test packets with patterns 0x41-0x48 (A-H)
+- Client receives and verifies size and pattern integrity
+- Tests driver's receive path (RX ring buffer, DMA, packet header parsing)
 
-The client verifies:
-- Correct packet size received
-- Pattern integrity throughout the packet
-- Reports any errors
+**TX Test (Client → Server):**
+- Client sends 8 test packets with patterns 0x51-0x58 (Q-X)
+- Server receives and verifies size and pattern integrity
+- Tests driver's transmit path (TX buffer, DMA, hardware transmission)
+
+Each packet contains:
+- 4-byte length prefix (network byte order)
+- Size header string (e.g., "SIZE:1024:")
+- Repeating byte pattern for verification
+
+Both sides verify:
+- Correct packet size received matches length prefix
+- Size header matches actual data received
+- Pattern integrity throughout the entire packet
+- TCP stream reassembly (handles partial receives)
 
 ## Test 3: Basic Ping Test
 
