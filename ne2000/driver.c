@@ -1160,10 +1160,18 @@ LONG IntCode(register struct UnitData *ud reg(a1))
             ULONG offset, len;
             UWORD mask = 0xFFFF;
             WORD i;
+            WORD packet_count = 0;
+            const WORD MAX_PACKETS_PER_INT = 64;  /* Prevent infinite loops */
 
-            while (RingBufferNotEmpty(ud))
+            /* Clear interrupt once before processing all packets */
+            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
+            hw_write_barrier(ud->ud_Hardware, ud);
+
+            /* Single read barrier at start of RX processing for efficiency */
+            hw_read_barrier(ud->ud_Hardware, ud);
+
+            while (RingBufferNotEmpty(ud) && packet_count++ < MAX_PACKETS_PER_INT)
             {
-                ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
                 len = PacketReceived(ud);
                 if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
                 {
@@ -1378,11 +1386,7 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *u
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
 
-    /* Ensure DMA setup reaches hardware before reading */
-    hw_write_barrier(ne, ud);
-
-    /* Invalidate cache to ensure we read fresh data from DMA port */
-    hw_read_barrier(ne, ud);
+    /* Note: Cache barriers done once per interrupt in caller for efficiency */
 
     hdr.w[0] = ne->DMAPort;
     hdr.w[1] = ne->DMAPort;
@@ -1410,11 +1414,7 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     ne->regs[NE2000_DMA_START_ADDR1] = startpage;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
 
-    /* Ensure DMA setup reaches hardware before starting reads */
-    hw_write_barrier(ne, ud);
-
-    /* Invalidate cache before reading DMA data to ensure fresh values */
-    hw_read_barrier(ne, ud);
+    /* Note: Cache barriers done once per interrupt in caller for efficiency */
 
     for (count = (len + 1) >> 1; count; count--)
     {
@@ -1634,11 +1634,9 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
-    hw_write_barrier(hw, ud);  /* Ensure page switch reaches hardware */
-    hw_read_barrier(hw, ud);   /* Ensure we read fresh CURRENT_PAGE */
+    /* Note: Cache barriers done once per interrupt in caller for efficiency */
     current = hw->regs[NE2000_CURRENT_PAGE];
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
-    hw_write_barrier(hw, ud);  /* Ensure page switch back reaches hardware */
 
     if (ud->ud_NextPage == current)
         return FALSE;
