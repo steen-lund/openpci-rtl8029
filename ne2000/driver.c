@@ -1432,7 +1432,7 @@ LONG PacketReceived(struct UnitData *ud)
     if (!mc)
         DBG1("Packet length: %ld.", len);
     next_page = (header >> 16) & 0xFF;
-    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, !mc, ud);
+    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
     ud->ud_NextPage = next_page;
     if (!mc)
         DBG1("Next page: $%02lx.", ud->ud_NextPage);
