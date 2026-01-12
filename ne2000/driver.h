@@ -33,7 +33,7 @@
 #define INIT_DBG_U(a) KPrintf(a "\n")
 #define INIT_DBG1_U(a,b) KPrintf(a "\n",(LONG)b)
 
-#ifdef PDEBUG
+#if PDEBUG
   #define USE_D(a) struct Library *##a = dd->dd_##a;
   #define USE_UD(a) struct Library *##a = ud->ud_##a;
   #define DBG(a) FPrintf(dd->debug, a "\n")

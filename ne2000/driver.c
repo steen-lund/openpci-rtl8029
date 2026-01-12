@@ -1384,11 +1384,9 @@ void BoardShutdown(struct UnitData *ud)
 
 ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *ud)
 {
-    union
-    {
-        ULONG l;   // 32-bit access to 16-bit data
-        UWORD w[2];
-    } hdr;
+    UWORD w0, w1;
+    UBYTE status, next_page, len_lo, len_hi;
+    ULONG result;
 
     ne->regs[NE2000_DMA_COUNTER0] = 4;
     ne->regs[NE2000_DMA_COUNTER1] = 0;
@@ -1399,17 +1397,36 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *u
     /* Minimal barrier: ensure DMA command reaches hardware */
     hw_write_barrier(ne, ud);
 
-    hdr.w[0] = ne->DMAPort;
-    hdr.w[1] = ne->DMAPort;
+    /* Read two 16-bit words from DMAPort
+     * The NE2000 packet header in memory is 4 bytes:
+     *   Byte 0: Receive Status
+     *   Byte 1: Next Page Pointer
+     *   Byte 2: Length Low
+     *   Byte 3: Length High
+     *
+     * DMAPort reads 16-bit words. On big-endian Amiga reading little-endian data:
+     * First word contains bytes 1,0 (in big-endian word format: byte1 in high, byte0 in low)
+     * Second word contains bytes 3,2
+     */
+    w0 = ne->DMAPort;  // Contains status and next_page
+    w1 = ne->DMAPort;  // Contains length
+
+    /* Extract bytes - the words are already byte-swapped by hardware */
+    status = (w0 >> 8) & 0xFF;      // High byte of first word
+    next_page = w0 & 0xFF;          // Low byte of first word
+    len_lo = (w1 >> 8) & 0xFF;      // High byte of second word
+    len_hi = w1 & 0xFF;             // Low byte of second word
+
+    /* Pack into result with proper layout for our code */
+    result = ((ULONG)status) | ((ULONG)next_page << 8) | ((ULONG)len_lo << 16) | ((ULONG)len_hi << 24);
 
 #if PDEBUG
     /* Ignore multicast packets*/
-    if (!(hdr.w[0] & 0x2000))
-        DBG1("GetPacketHeader(): header = $%08lx.", hdr.l);
-
+    if (!(status & 0x20))
+        DBG1("GetPacketHeader(): header = $%08lx.", result);
 #endif
 
-    return hdr.l;
+    return result;
 }
 
 ///
@@ -1449,13 +1466,39 @@ LONG PacketReceived(struct UnitData *ud)
     UBYTE next_page;
 
     header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage, ud);
-    BOOL mc = (header & 0x20000000) != 0;
+
+    /* Header layout from GetPacketHeader:
+     * Byte 0: Receive Status (bit 0x20 = multicast)
+     * Byte 1: Next Page Pointer
+     * Byte 2: Length Low byte
+     * Byte 3: Length High byte
+     */
+    BOOL mc = (header & 0x20) != 0;  // Multicast bit in byte 0
     if (!mc)
+    {
         DBG1("Header: $%08lx.", header);
-    len = swapw(header & 0xFFFF);
+        DBG1("  Byte 0 (status): $%02lx", (header >> 0) & 0xFF);
+        DBG1("  Byte 1 (next_page): $%02lx", (header >> 8) & 0xFF);
+        DBG1("  Byte 2 (len_lo): $%02lx", (header >> 16) & 0xFF);
+        DBG1("  Byte 3 (len_hi): $%02lx", (header >> 24) & 0xFF);
+    }
+
+    /* Extract next page from byte 1 */
+    next_page = (header >> 8) & 0xFF;
+
+    /* Extract length: len_lo in byte 2, len_hi in byte 3 */
+    len = ((header >> 16) & 0xFF) | (((header >> 24) & 0xFF) << 8);
     if (!mc)
+    {
         DBG1("Packet length: %ld.", len);
-    next_page = (header >> 16) & 0xFF;
+        /* Calculate expected pages for verification */
+        ULONG expected_pages = (len + 4 + 255) >> 8;
+        UBYTE calculated_next = ud->ud_NextPage + expected_pages;
+        if (calculated_next >= BUFFER_END)
+            calculated_next -= (BUFFER_END - RX_BUFFER);
+        DBG1("Expected pages: %ld", expected_pages);
+        DBG1("Calculated next: $%02lx", calculated_next);
+    }
 
     /* Validate next_page is within ring buffer bounds (RX_BUFFER to BUFFER_END) */
     if (next_page < RX_BUFFER || next_page >= BUFFER_END)
@@ -1619,6 +1662,15 @@ void GetHwAddress(struct UnitData *ud)
     INIT_DBG_U("Hardware address (read):");
     for (i = 0; i < 6; i++)
         INIT_DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
+
+    /* Debug function verification with known test values */
+    INIT_DBG_U("Debug verification - testing output formats:");
+    INIT_DBG1_U("  UBYTE test: 0x%02lx (expected: 0xAB)", (ULONG)0xAB);
+    INIT_DBG1_U("  UWORD test: 0x%04lx (expected: 0x1234)", (ULONG)0x1234);
+    INIT_DBG1_U("  ULONG test: 0x%08lx (expected: 0xDEADBEEF)", (ULONG)0xDEADBEEF);
+    INIT_DBG1_U("  Decimal test: %ld (expected: 1518)", (LONG)1518);
+    INIT_DBG1_U("  Test packet size: %ld bytes", (LONG)1518);
+    INIT_DBG1_U("  Calculated pages: %ld (expected: 6 pages)", (LONG)((1518 + 4 + 255) >> 8));
 
     return;
 }
