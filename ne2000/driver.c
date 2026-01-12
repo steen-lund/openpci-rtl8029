@@ -1352,7 +1352,7 @@ void BoardShutdown(struct UnitData *ud)
 ///
 /// GetPacketHeader()
 
-ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
+ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *ud)
 {
     union
     {
@@ -1365,7 +1365,13 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
     ne->regs[NE2000_DMA_START_ADDR0] = 0;
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
-    /* Note: Read operations implicitly wait for hardware, no explicit barrier needed */
+
+    /* Ensure DMA setup reaches hardware before reading */
+    hw_write_barrier(ne, ud);
+
+    /* Invalidate cache to ensure we read fresh data from DMA port */
+    hw_read_barrier(ne, ud);
+
     hdr.w[0] = ne->DMAPort;
     hdr.w[1] = ne->DMAPort;
 
@@ -1382,7 +1388,7 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page)
 ///
 /// GetPacket()
 
-void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer, BOOL print)
+void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *buffer, BOOL print, struct UnitData *ud)
 {
     UWORD count;
 
@@ -1391,7 +1397,12 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     ne->regs[NE2000_DMA_START_ADDR0] = 4;
     ne->regs[NE2000_DMA_START_ADDR1] = startpage;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
-    /* Note: Read operations implicitly wait for hardware, no explicit barrier needed */
+
+    /* Ensure DMA setup reaches hardware before starting reads */
+    hw_write_barrier(ne, ud);
+
+    /* Invalidate cache before reading DMA data to ensure fresh values */
+    hw_read_barrier(ne, ud);
 
     for (count = (len + 1) >> 1; count; count--)
     {
@@ -1401,7 +1412,7 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
         ++buffer;
     }
     if (print)
-        DBG("");    
+        DBG("");
     return;
 }
 
@@ -1413,7 +1424,7 @@ LONG PacketReceived(struct UnitData *ud)
     ULONG header, len;
     UBYTE next_page;
 
-    header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage);
+    header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage, ud);
     BOOL mc = (header & 0x20000000) != 0;
     if (!mc)
         DBG1("Header: $%08lx.", header);
@@ -1421,7 +1432,7 @@ LONG PacketReceived(struct UnitData *ud)
     if (!mc)
         DBG1("Packet length: %ld.", len);
     next_page = (header >> 16) & 0xFF;
-    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, !mc);
+    GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, !mc, ud);
     ud->ud_NextPage = next_page;
     if (!mc)
         DBG1("Next page: $%02lx.", ud->ud_NextPage);
