@@ -1443,7 +1443,7 @@ LONG PacketReceived(struct UnitData *ud)
     len = swapw(header & 0xFFFF);
     if (!mc)
         DBG1("Packet length: %ld.", len);
-    next_page = (header >> 16) & 0xFF;
+    next_page = (header >> 8) & 0xFF;
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
     ud->ud_NextPage = next_page;
     if (!mc)
