@@ -312,6 +312,22 @@ static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct UnitData 
     }
 }
 
+/* Read barrier: invalidate cache before reading from hardware */
+static inline void hw_read_barrier(volatile struct Ne2000 *hw, struct UnitData *ud)
+{
+    struct Library *SysBase;
+
+    /* If MMU library marked hardware as cache-inhibited, no flush needed */
+    if (ud->ud_UseMMUCacheInhibit)
+        return;
+
+    /* Fallback: Invalidate data cache to ensure reads come from hardware */
+    SysBase = ud->ud_SysBase;
+    if (SysBase) {
+        CacheClearE((APTR)hw, sizeof(struct Ne2000), CACRF_ClearD);
+    }
+}
+
 /* Setup cache-inhibited mapping for hardware using MMU library (if available) */
 static BOOL setup_cache_inhibited_hw(struct UnitData *ud)
 {
@@ -1094,6 +1110,9 @@ LONG IntCode(register struct UnitData *ud reg(a1))
     struct IOSana2Req *req;
     LONG my_int = 0;
 
+    /* Ensure we read fresh interrupt status from hardware, not cached value */
+    hw_read_barrier(ud->ud_Hardware, ud);
+
     while ((intstatus = (ud->ud_Hardware->regs[NE2000_INT_STATUS] & INTMASK)))
     {
         if (intstatus & INT_TXERROR)
@@ -1513,7 +1532,9 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
 
     while (!(hw->regs[NE2000_INT_STATUS] & INT_DMAFINISH))
-        ;
+    {
+        hw_read_barrier(hw, ud);  /* Ensure we read fresh status, not cached */
+    }
     hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH;
 
     /* Send packet to the wire. Register setup first.                                                      */
@@ -1590,8 +1611,11 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
+    hw_write_barrier(hw, ud);  /* Ensure page switch reaches hardware */
+    hw_read_barrier(hw, ud);   /* Ensure we read fresh CURRENT_PAGE */
     current = hw->regs[NE2000_CURRENT_PAGE];
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
+    hw_write_barrier(hw, ud);  /* Ensure page switch back reaches hardware */
 
     if (ud->ud_NextPage == current)
         return FALSE;
