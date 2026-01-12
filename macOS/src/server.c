@@ -167,6 +167,16 @@ int main()
         printf("Sending test packet %zu/%zu: %zu bytes (pattern: 0x%02X)...\n",
                i + 1, num_tests, size, pattern);
 
+        // Send length prefix (4 bytes, network byte order)
+        uint32_t net_size = htonl((uint32_t)size);
+        bytes_written = write(client_socket_fd, &net_size, sizeof(net_size));
+        if (bytes_written < 0) {
+            perror("write length");
+            free(test_buffer);
+            break;
+        }
+
+        // Send the actual data
         bytes_written = write(client_socket_fd, test_buffer, size);
         if (bytes_written < 0) {
             perror("write");

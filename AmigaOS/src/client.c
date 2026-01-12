@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <proto/exec.h>
 #include <proto/bsdsocket.h>
 #include <proto/dos.h>
@@ -106,33 +109,68 @@ int main(int argc, char *argv[])
     int errors = 0;
 
     while (1) {
-        bytes_read = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
-        if (bytes_read <= 0) {
-            if (bytes_read == 0) {
-                printf("Connection closed by server.\n");
-            } else {
-                PrintFault(IoErr(), "recv");
+        // Read length prefix (4 bytes)
+        uint32_t net_size;
+        size_t total_read = 0;
+        while (total_read < sizeof(net_size)) {
+            bytes_read = recv(socket_fd, ((char*)&net_size) + total_read,
+                            sizeof(net_size) - total_read, 0);
+            if (bytes_read <= 0) {
+                if (bytes_read == 0) {
+                    if (total_read == 0) {
+                        printf("Connection closed by server.\n");
+                        goto cleanup;
+                    }
+                    printf("Connection closed mid-length!\n");
+                } else {
+                    PrintFault(IoErr(), "recv length");
+                }
+                goto cleanup;
             }
+            total_read += bytes_read;
+        }
+
+        size_t expected_size = ntohl(net_size);
+        if (expected_size > BUFFER_SIZE - 1) {
+            printf("Packet too large: %zu bytes\n", expected_size);
+            errors++;
             break;
         }
 
+        // Read the complete packet data (loop until we get all bytes)
+        total_read = 0;
+        while (total_read < expected_size) {
+            bytes_read = recv(socket_fd, buffer + total_read,
+                            expected_size - total_read, 0);
+            if (bytes_read <= 0) {
+                if (bytes_read == 0) {
+                    printf("Connection closed mid-packet!\n");
+                } else {
+                    PrintFault(IoErr(), "recv data");
+                }
+                goto cleanup;
+            }
+            total_read += bytes_read;
+        }
+
         packet_num++;
-        buffer[bytes_read] = '\0';
+        buffer[total_read] = '\0';
 
-        // Parse size from header
-        size_t expected_size = 0;
-        if (sscanf(buffer, "SIZE:%zu:", &expected_size) == 1) {
-            printf("Packet %d: Received %d bytes (expected %zu)\n",
-                   packet_num, (int)bytes_read, expected_size);
+        // Parse size from header to verify
+        size_t header_size = 0;
+        if (sscanf(buffer, "SIZE:%zu:", &header_size) == 1) {
+            printf("Packet %d: Received %zu bytes (expected %zu)\n",
+                   packet_num, total_read, header_size);
 
-            // Verify size matches
-            if ((size_t)bytes_read != expected_size) {
-                printf("  ERROR: Size mismatch!\n");
+            // Verify size matches (both the length prefix and the header)
+            if (total_read != expected_size || expected_size != header_size) {
+                printf("  ERROR: Size mismatch! (length=%zu, total=%zu, header=%zu)\n",
+                       expected_size, total_read, header_size);
                 errors++;
             } else {
                 // Verify pattern in payload
                 size_t header_len = 0;
-                for (size_t i = 0; i < (size_t)bytes_read && buffer[i] != ':'; i++) {
+                for (size_t i = 0; i < total_read && buffer[i] != '\0'; i++) {
                     if (i > 0 && buffer[i-1] == ':') {
                         header_len = i;
                         break;
@@ -140,11 +178,11 @@ int main(int argc, char *argv[])
                 }
                 if (header_len == 0) header_len = strlen(buffer);
 
-                // Check pattern consistency
+                // Check pattern consistency (note: pattern will be 0x00 if all NUL bytes)
                 int pattern_ok = 1;
-                if (header_len < (size_t)bytes_read) {
+                if (header_len < total_read) {
                     unsigned char expected_pattern = buffer[header_len];
-                    for (size_t i = header_len + 1; i < (size_t)bytes_read; i++) {
+                    for (size_t i = header_len + 1; i < total_read; i++) {
                         if ((unsigned char)buffer[i] != expected_pattern) {
                             pattern_ok = 0;
                             break;
@@ -154,15 +192,15 @@ int main(int argc, char *argv[])
 
                 if (pattern_ok) {
                     printf("  OK: Pattern verified (0x%02X)\n",
-                           header_len < (size_t)bytes_read ? (unsigned char)buffer[header_len] : 0);
+                           header_len < total_read ? (unsigned char)buffer[header_len] : 0);
                 } else {
                     printf("  ERROR: Pattern mismatch!\n");
                     errors++;
                 }
             }
         } else {
-            printf("Packet %d: Received %d bytes (unknown format)\n",
-                   packet_num, (int)bytes_read);
+            printf("Packet %d: Received %zu bytes (unknown format)\n",
+                   packet_num, total_read);
         }
 
         // Send acknowledgment
@@ -175,6 +213,7 @@ int main(int argc, char *argv[])
         }
     }
 
+cleanup:
     printf("\n");
     printf("Test complete: %d packets received, %d errors\n", packet_num, errors);
 
