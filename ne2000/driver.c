@@ -542,6 +542,18 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
 
+    /* Unimplemented but valid SANA2 commands - return not supported */
+    case S2_ADDMULTICASTADDRESS:
+    case S2_DELMULTICASTADDRESS:
+    case S2_TRACKTYPE:
+    case S2_UNTRACKTYPE:
+    case S2_GETTYPESTATS:
+    case S2_GETSPECIALSTATS:
+    case S2_ONEVENT:
+    case S2_READORPHAN:
+        IoDone(ud, req, S2ERR_NOT_SUPPORTED, S2WERR_GENERIC_ERROR);
+        break;
+
     default:
         DBG1("DevBeginIo(): unknown command code %ld.", req->ios2_Req.io_Command);
         IoDone(ud, req, IOERR_NOCMD, S2WERR_GENERIC_ERROR);
