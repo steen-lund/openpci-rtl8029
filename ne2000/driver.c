@@ -1170,9 +1170,19 @@ LONG IntCode(register struct UnitData *ud reg(a1))
             /* Single read barrier at start of RX processing for efficiency */
             hw_read_barrier(ud->ud_Hardware, ud);
 
-            while (RingBufferNotEmpty(ud) && packet_count++ < MAX_PACKETS_PER_INT)
+            while (RingBufferNotEmpty(ud) && packet_count < MAX_PACKETS_PER_INT)
             {
+                packet_count++;
                 len = PacketReceived(ud);
+
+                /* Validate packet length - if corrupt, reset ring buffer */
+                if (len < 60 || len > 1518)
+                {
+                    DBG1_U("Corrupt packet detected (len=%ld), resetting ring buffer", len);
+                    BufferOverflow(ud);
+                    break;
+                }
+
                 if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
                 {
                     if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
@@ -1444,6 +1454,16 @@ LONG PacketReceived(struct UnitData *ud)
     if (!mc)
         DBG1("Packet length: %ld.", len);
     next_page = (header >> 8) & 0xFF;
+
+    /* Validate next_page is within ring buffer bounds (RX_BUFFER to BUFFER_END) */
+    if (next_page < RX_BUFFER || next_page >= BUFFER_END)
+    {
+        DBG1_U("Invalid next_page $%02lx, using current+1", next_page);
+        next_page = ud->ud_NextPage + 1;
+        if (next_page >= BUFFER_END)
+            next_page = RX_BUFFER;
+    }
+
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
     ud->ud_NextPage = next_page;
     if (!mc)
