@@ -522,7 +522,7 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         break;
 
     case CMD_READ:
-        DBG1("CMD_READ [$%08lx].", (LONG)req);
+        /* DBG1("CMD_READ [$%08lx].", (LONG)req); */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
@@ -531,13 +531,13 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         for (i = 0; i < 6; i++)
             req->ios2_DstAddr[i] = 0xFF;
     case CMD_WRITE:
-        DBG1("CMD_WRITE [$%08lx].", (LONG)req);
+        /* DBG1("CMD_WRITE [$%08lx].", (LONG)req); */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
 
     case CMD_FLUSH:
-        DBG1("CMD_FLUSH [$%08lx].", (LONG)req);
+        /* DBG1("CMD_FLUSH [$%08lx].", (LONG)req); */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
@@ -1562,7 +1562,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* OK. Packet was sent (succesfully or not). Hardware will respond with TXPACKET or TXERROR interrupt  */
     /* then we will be able to reply IORequest in the interrupt server.                                    */
 
-    DBG_T("Packet sent.");
+    /* DBG_T("Packet sent."); */
     return;
 }
 
@@ -1718,12 +1718,12 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
     sigmask = 1 << port->mp_SigBit;
     for (;;)
     {
-        DBG_T("Waiting...");
+        /* DBG_T("Waiting..."); */
         signals = Wait(SIGBREAKF_CTRL_C | sigmask | ud->ud_GoWriteMask);
 
         if (signals & ud->ud_GoWriteMask)
         {
-            DBG_T("GoWrite");
+            /* DBG_T("GoWrite"); */
             ObtainSemaphore(&ud->ud_TxSem);
             req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
             ReleaseSemaphore(&ud->ud_TxSem);
@@ -1742,13 +1742,13 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
         {
             struct IOSana2Req *req;
 
-            DBG_T("port");
+            /* DBG_T("port"); */
             while (req = (struct IOSana2Req *)GetMsg(port))
             {
                 switch (req->ios2_Req.io_Command)
                 {
                 case CMD_READ:
-                    DBG1_T("-> READ [$%08lx].", req);
+                    /* DBG1_T("-> READ [$%08lx].", req); */
                     ObtainSemaphore(&ud->ud_RxSem);
                     AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
                     ReleaseSemaphore(&ud->ud_RxSem);
@@ -1756,7 +1756,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 
                 case S2_BROADCAST:
                 case CMD_WRITE:
-                    DBG1_T("-> WRITE [$%08lx].", req);
+                    /* DBG1_T("-> WRITE [$%08lx].", req); */
                     if (ud->ud_PendingWrite)
                     {
                         ObtainSemaphore(&ud->ud_TxSem);
@@ -1767,7 +1767,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                     {
                         ud->ud_PendingWrite = req;
                         SendPacket(ud, req);
-                        DBG_T("Packet sent 2.");
+                        /* DBG_T("Packet sent 2."); */
                     }
                     break;
 
