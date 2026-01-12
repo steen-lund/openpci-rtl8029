@@ -1396,7 +1396,8 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *u
     ne->regs[NE2000_DMA_START_ADDR1] = page;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
 
-    /* Note: Cache barriers done once per interrupt in caller for efficiency */
+    /* Minimal barrier: ensure DMA command reaches hardware */
+    hw_write_barrier(ne, ud);
 
     hdr.w[0] = ne->DMAPort;
     hdr.w[1] = ne->DMAPort;
@@ -1424,7 +1425,8 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     ne->regs[NE2000_DMA_START_ADDR1] = startpage;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
 
-    /* Note: Cache barriers done once per interrupt in caller for efficiency */
+    /* Minimal barrier: ensure DMA command reaches hardware */
+    hw_write_barrier(ne, ud);
 
     for (count = (len + 1) >> 1; count; count--)
     {
@@ -1469,7 +1471,6 @@ LONG PacketReceived(struct UnitData *ud)
     if (!mc)
         DBG1("Next page: $%02lx.", ud->ud_NextPage);
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage == RX_BUFFER ? BUFFER_END - 1 : ud->ud_NextPage - 1;
-    ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
     return len;
 }
 
