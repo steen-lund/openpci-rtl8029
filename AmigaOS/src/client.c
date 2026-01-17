@@ -107,8 +107,9 @@ int main(int argc, char *argv[])
     // Receive and verify test packets
     int packet_num = 0;
     int errors = 0;
+    const int expected_packets = 8;  // Server sends 8 test packets
 
-    while (1) {
+    while (packet_num < expected_packets) {
         // Read length prefix (4 bytes)
         uint32_t net_size;
         size_t total_read = 0;
@@ -131,6 +132,9 @@ int main(int argc, char *argv[])
         }
 
         size_t expected_size = ntohl(net_size);
+
+        printf("DEBUG: Read length prefix: 0x%08X -> %zu bytes\n", net_size, expected_size);
+
         if (expected_size > BUFFER_SIZE - 1) {
             printf("Packet too large: %zu bytes\n", expected_size);
             errors++;
@@ -156,6 +160,12 @@ int main(int argc, char *argv[])
         packet_num++;
         buffer[total_read] = '\0';
 
+        printf("DEBUG: Received %zu bytes, first 20: ", total_read);
+        for (size_t i = 0; i < 20 && i < total_read; i++) {
+            printf("%02X ", (unsigned char)buffer[i]);
+        }
+        printf("\n");
+
         // Parse size from header to verify
         size_t header_size = 0;
         if (sscanf(buffer, "SIZE:%zu:", &header_size) == 1) {
@@ -169,11 +179,16 @@ int main(int argc, char *argv[])
                 errors++;
             } else {
                 // Verify pattern in payload
+                // Find the end of "SIZE:NNN:" header (look for second colon)
                 size_t header_len = 0;
-                for (size_t i = 0; i < total_read && buffer[i] != '\0'; i++) {
-                    if (i > 0 && buffer[i-1] == ':') {
-                        header_len = i;
-                        break;
+                int colon_count = 0;
+                for (size_t i = 0; i < total_read; i++) {
+                    if (buffer[i] == ':') {
+                        colon_count++;
+                        if (colon_count == 2) {
+                            header_len = i + 1;  // Position after second colon
+                            break;
+                        }
                     }
                 }
                 if (header_len == 0) header_len = strlen(buffer);
@@ -230,9 +245,10 @@ cleanup:
         size_t size = tx_test_sizes[i];
 
         // Create test buffer
+        printf("TX Packet %zu/%zu: Allocating %zu bytes...\n", i + 1, tx_num_tests, size);
         char *test_buffer = malloc(size);
         if (!test_buffer) {
-            printf("malloc failed\n");
+            printf("  ERROR: malloc(%zu) failed\n", size);
             tx_errors++;
             break;
         }
@@ -245,8 +261,7 @@ cleanup:
             test_buffer[j] = pattern;
         }
 
-        printf("TX Packet %zu/%zu: Sending %zu bytes (pattern: 0x%02X)...\n",
-               i + 1, tx_num_tests, size, pattern);
+        printf("  Sending %zu bytes (pattern: 0x%02X)...\n", size, pattern);
 
         // Send length prefix
         uint32_t net_size = htonl((uint32_t)size);
@@ -265,18 +280,26 @@ cleanup:
                                size - total_sent, 0);
             if (bytes_written < 0) {
                 PrintFault(IoErr(), "send data");
+                free(test_buffer);
                 tx_errors++;
-                break;
+                goto tx_done;
+            }
+            if (bytes_written == 0) {
+                printf("  ERROR: send returned 0\n");
+                free(test_buffer);
+                tx_errors++;
+                goto tx_done;
             }
             total_sent += bytes_written;
         }
 
         free(test_buffer);
+        test_buffer = NULL;
 
         if (total_sent != size) {
             printf("  ERROR: Only sent %zu of %zu bytes\n", total_sent, size);
             tx_errors++;
-            continue;
+            goto tx_done;
         }
 
         // Wait for acknowledgment
@@ -290,8 +313,56 @@ cleanup:
         printf("  Server ACK: %s\n\n", buffer);
     }
 
+tx_done:
     printf("\n");
     printf("TX test complete: %zu packets sent, %d errors\n", tx_num_tests, tx_errors);
+
+    // Endianness test - send structured binary data
+    printf("\nEndianness test: Sending binary data...\n");
+
+    struct {
+        uint32_t magic;      // 0xDEADBEEF
+        uint16_t version;    // 0x1234
+        uint32_t counter;    // 12345678
+        float value;         // 3.14159
+        uint64_t timestamp;  // 0x0123456789ABCDEF
+    } test_data;
+
+    test_data.magic = htonl(0xDEADBEEF);
+    test_data.version = htons(0x1234);
+    test_data.counter = htonl(12345678);
+    // Float requires special handling
+    union { float f; uint32_t i; } float_conv;
+    float_conv.f = 3.14159f;
+    float_conv.i = htonl(float_conv.i);
+    test_data.value = float_conv.f;
+    // 64-bit value
+    test_data.timestamp = ((uint64_t)htonl(0x01234567) << 32) | htonl(0x89ABCDEF);
+
+    // Send length prefix
+    uint32_t net_size = htonl((uint32_t)sizeof(test_data));
+    bytes_written = send(socket_fd, (char*)&net_size, sizeof(net_size), 0);
+    if (bytes_written < 0) {
+        PrintFault(IoErr(), "send endian test length");
+        tx_errors++;
+    } else {
+        // Send data
+        bytes_written = send(socket_fd, (char*)&test_data, sizeof(test_data), 0);
+        if (bytes_written < 0) {
+            PrintFault(IoErr(), "send endian test data");
+            tx_errors++;
+        } else {
+            printf("  Sent %d bytes of binary data\n", (int)bytes_written);
+
+            // Wait for verification response
+            bytes_read = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                printf("  Server response: %s\n", buffer);
+            }
+        }
+    }
+
     printf("\n");
     printf("Overall: RX=%d errors, TX=%d errors\n", errors, tx_errors);
 

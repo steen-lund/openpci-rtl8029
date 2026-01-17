@@ -208,8 +208,9 @@ int main()
     // Receive test packets from client
     int rx_packet_num = 0;
     int rx_errors = 0;
+    const int expected_rx_packets = 8;  // Client sends 8 test packets
 
-    while (1) {
+    while (rx_packet_num < expected_rx_packets) {
         // Read length prefix (4 bytes)
         uint32_t net_size;
         size_t total_read = 0;
@@ -268,13 +269,19 @@ int main()
                 rx_errors++;
             } else {
                 // Verify pattern
-                size_t header_len = strlen("SIZE:") + strlen(":") + 10;  // Approximate
-                for (size_t i = 0; i < total_read && buffer[i] != '\0'; i++) {
-                    if (i > 0 && buffer[i-1] == ':') {
-                        header_len = i;
-                        break;
+                // Find the end of "SIZE:NNN:" header (look for second colon)
+                size_t header_len = 0;
+                int colon_count = 0;
+                for (size_t i = 0; i < total_read; i++) {
+                    if (buffer[i] == ':') {
+                        colon_count++;
+                        if (colon_count == 2) {
+                            header_len = i + 1;  // Position after second colon
+                            break;
+                        }
                     }
                 }
+                if (header_len == 0) header_len = total_read;
 
                 int pattern_ok = 1;
                 if (header_len < total_read) {
@@ -310,6 +317,96 @@ done:
     printf("\n");
     printf("Client TX test complete: %d packets received, %d errors\n", rx_packet_num, rx_errors);
 
+    // Endianness test - receive and verify structured binary data
+    printf("\nEndianness test: Receiving binary data...\n");
+
+    // Read length prefix
+    uint32_t net_size;
+    size_t total_read = 0;
+    while (total_read < sizeof(net_size)) {
+        bytes_read = read(client_socket_fd, ((char*)&net_size) + total_read,
+                        sizeof(net_size) - total_read);
+        if (bytes_read <= 0) {
+            printf("Failed to read endian test length\n");
+            goto cleanup;
+        }
+        total_read += bytes_read;
+    }
+
+    size_t expected_size = ntohl(net_size);
+    printf("  Expecting %zu bytes of binary data\n", expected_size);
+
+    // Read data
+    char binary_buffer[256];
+    total_read = 0;
+    while (total_read < expected_size) {
+        bytes_read = read(client_socket_fd, binary_buffer + total_read,
+                        expected_size - total_read);
+        if (bytes_read <= 0) {
+            printf("Failed to read endian test data\n");
+            goto cleanup;
+        }
+        total_read += bytes_read;
+    }
+
+    // Verify the data
+    struct {
+        uint32_t magic;
+        uint16_t version;
+        uint32_t counter;
+        float value;
+        uint64_t timestamp;
+    } *test_data = (void*)binary_buffer;
+
+    uint32_t magic = ntohl(test_data->magic);
+    uint16_t version = ntohs(test_data->version);
+    uint32_t counter = ntohl(test_data->counter);
+
+    // Float conversion
+    union { float f; uint32_t i; } float_conv;
+    float_conv.f = test_data->value;
+    float_conv.i = ntohl(float_conv.i);
+    float value = float_conv.f;
+
+    // 64-bit conversion
+    uint64_t timestamp = ((uint64_t)ntohl((uint32_t)(test_data->timestamp >> 32)) << 32) |
+                         ntohl((uint32_t)(test_data->timestamp & 0xFFFFFFFF));
+
+    int endian_errors = 0;
+    printf("  Verifying received data:\n");
+    printf("    magic:     0x%08X (expected 0xDEADBEEF) %s\n", magic,
+           magic == 0xDEADBEEF ? "✓" : "✗");
+    if (magic != 0xDEADBEEF) endian_errors++;
+
+    printf("    version:   0x%04X (expected 0x1234) %s\n", version,
+           version == 0x1234 ? "✓" : "✗");
+    if (version != 0x1234) endian_errors++;
+
+    printf("    counter:   %u (expected 12345678) %s\n", counter,
+           counter == 12345678 ? "✓" : "✗");
+    if (counter != 12345678) endian_errors++;
+
+    printf("    value:     %.5f (expected 3.14159) %s\n", value,
+           (value > 3.14158 && value < 3.14160) ? "✓" : "✗");
+    if (!(value > 3.14158 && value < 3.14160)) endian_errors++;
+
+    printf("    timestamp: 0x%016llX (expected 0x0123456789ABCDEF) %s\n",
+           (unsigned long long)timestamp,
+           timestamp == 0x0123456789ABCDEFULL ? "✓" : "✗");
+    if (timestamp != 0x0123456789ABCDEFULL) endian_errors++;
+
+    // Send response
+    char response[128];
+    if (endian_errors == 0) {
+        snprintf(response, sizeof(response), "ENDIAN-OK: All values correct!");
+    } else {
+        snprintf(response, sizeof(response), "ENDIAN-ERROR: %d values incorrect", endian_errors);
+    }
+    write(client_socket_fd, response, strlen(response));
+
+    printf("\nEndianness test: %s\n", endian_errors == 0 ? "PASSED" : "FAILED");
+
+cleanup:
     close(client_socket_fd);
     close(socket_fd);
 
