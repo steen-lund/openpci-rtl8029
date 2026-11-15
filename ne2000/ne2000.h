@@ -54,6 +54,10 @@
 #define INT_RXPACKET    0x01
 
 #define TXS_TRANSMITTED_OK    0x01
+#define TXS_COLLIDED          0x04   /* collided at least once (retried) */
+#define TXS_ABORTED           0x08   /* gave up after 16 collisions */
+#define TXS_CARRIER_LOST      0x10   /* carrier lost during transmission */
+#define TXS_LATE_COLLISION    0x80   /* collision after the first 64 bytes */
 
 #define NE2000_COMMAND             0
 #define NE2000_PAGE_START          1
@@ -63,6 +67,15 @@
 #define NE2000_TX_PAGE_START       4      /* write */
 #define NE2000_TX_STATUS           4      /* read */
 #define NE2000_TX_COUNTER0         5
+#define NE2000_COLLISIONS          5      /* read: collisions of the last transmit */
+#define NE2000_RX_STATUS          12      /* read: status of the last received frame */
+#define NE2000_CNT_ALIGN_ERRORS   13      /* read: tally counters, cleared by reading */
+#define NE2000_CNT_CRC_ERRORS     14
+#define NE2000_CNT_MISSED         15
+#define COMMAND_PAGE3   0xC0              /* RTL8029 configuration registers */
+#define RTL8029_CONFIG0            3      /* register page 3 */
+#define RTL8029_CONFIG2            5
+#define RTL8029_CONFIG3            6
 #define NE2000_TX_COUNTER1         6
 #define NE2000_CURRENT_PAGE        7      /* register page 1 */
 #define NE2000_INT_STATUS          7

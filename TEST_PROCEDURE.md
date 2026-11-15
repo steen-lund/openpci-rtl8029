@@ -173,6 +173,7 @@ If tests fail, check:
 
 - Run `s2stat` on the Amiga (twice, a few seconds apart) to see the driver's counters and
   what its unit task is doing.
+- `client <server_ip> BENCH` also runs a throughput benchmark (4 MB each way, no disk).
 - From the Mac, sweep frame sizes with ping: `ping -c 3 -s 1472 <amiga_ip>` is a full-size
   1514-byte frame; `-s 56` a small one.
 

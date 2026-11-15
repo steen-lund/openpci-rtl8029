@@ -179,6 +179,22 @@ enum
     DG_TICKSRXREAD,   /* ... of which reading frames from the card */
     DG_TICKSRXCOPY,   /* ... of which handing frames to the stack (its CopyToBuff + reply) */
     DG_TICKSTX,       /* total time spent in SendPacket() (the stack's CopyFromBuff + upload) */
+    DG_RXALIGNERRORS, /* card tally: received frames with alignment errors (dropped by the card) */
+    DG_RXCRCERRORS,   /* card tally: received frames with CRC errors (dropped by the card) */
+    DG_RXMISSED,      /* card tally: frames the card could not store (ring full or card stopped) */
+    DG_TXCOLLISIONS,  /* collisions while transmitting (each one retried by the card) */
+    DG_TXLATECOLL,    /* transmits hit by a collision after the first 64 bytes */
+    DG_TXCARRIERLOST, /* transmits during which the carrier was lost */
+    DG_RTLCONFIG,     /* RTL8029 CONFIG0, CONFIG2, CONFIG3 (low byte); $40 in CONFIG3 = full duplex */
+    DG_RXWRAPPED,     /* received frames that wrapped around the end of the card's ring */
+    DG_RXSUMCHECKED,  /* received IPv4 frames whose checksums the driver verified (diagnostic) */
+    DG_RXSUMBAD,      /* ... that failed: the data read from the card is damaged */
+    DG_RXSUMBADWRAP,  /* ... of which wrapped around the end of the ring */
+    DG_LASTSUMBAD,    /* last damaged frame: ring start page << 16 | frame length */
+    DG_RXECHOREQ,     /* ICMP echo requests (pings) received, for counting against a known number sent */
+    DG_RXERRINTS,     /* times the card flagged a receive error (frame rejected by the card) */
+    DG_LASTRXSTATUS,  /* the card's receive status register when it last did */
+    DG_INTSEEN,       /* all interrupt status bits ever seen, including ones the driver does not use */
     DG_COUNT
 };
 
@@ -195,7 +211,9 @@ static const char *const DiagNames[DG_COUNT] =
     "LastBadHeader", "Overflows", "TxStarted", "TxDone", "TxErrors", "TxNoPending",
     "TxDmaTimeout", "ReadsQueued", "WritesQueued", "TxPending", "NextPage", "LastCurrent",
     "LastIntStatus", "TaskState", "MMUInhibit", "EClockFreq", "TicksService", "TicksRxRead",
-    "TicksRxCopy", "TicksTx"
+    "TicksRxCopy", "TicksTx", "RxAlignErrors", "RxCrcErrors", "RxMissed", "TxCollisions",
+    "TxLateColl", "TxCarrierLost", "RtlConfig", "RxWrapped", "RxSumChecked", "RxSumBad",
+    "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen"
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
@@ -1473,6 +1491,17 @@ BOOL GoOnline(struct UnitData *ud)
     /* The reset put the card's ring pointers back to the start: follow them */
     ud->ud_NextPage = RX_BUFFER;
 
+    /* For diagnostics: the RTL8029's own configuration (media type, duplex). The card's   */
+    /* interrupts are masked here, so another register page may be selected.               */
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE3 | COMMAND_ABORT | COMMAND_STOP;
+    hw_write_barrier(hw, ud);
+    hw_read_barrier(hw, ud);
+    DIAG(DG_RTLCONFIG) = ((ULONG)hw->regs[RTL8029_CONFIG0] << 16) |
+                         ((ULONG)hw->regs[RTL8029_CONFIG2] << 8) |
+                         hw->regs[RTL8029_CONFIG3];
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
+    hw_write_barrier(hw, ud);
+
     if (!InstallInterrupt(ud))
         return FALSE;
 
@@ -1611,6 +1640,78 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 /* Passing those 4 bytes on made a full sized frame look longer than the MTU to the TCP/IP  */
 /* stack, which then dropped it: frames of 1511 bytes and more never got through.            */
 #define RING_OVERHEAD   4
+
+/* Diagnostic: verify the IPv4 header checksum and the ICMP/UDP/TCP checksum of a received */
+/* frame, to tell whether the data read from the card arrived intact. The card has already */
+/* checked the frame's CRC on the wire, so a failure here means the copy out of the card's  */
+/* ring is damaged. It costs time per packet, so it is off unless needed: set to 1 to       */
+/* enable (RxSumChecked, RxSumBad, RxSumBadWrap, LastSumBad and RxEchoReq stay 0 otherwise). */
+#define RX_VERIFY_CHECKSUMS 0
+
+#if RX_VERIFY_CHECKSUMS
+static ULONG sum_words(const UWORD *p, ULONG bytes, ULONG sum)
+{
+    for (; bytes > 1; bytes -= 2)
+        sum += *p++;
+    if (bytes)
+        sum += *p & 0xFF00;
+    return sum;
+}
+
+static UWORD fold_sum(ULONG sum)
+{
+    sum = (sum >> 16) + (sum & 0xFFFF);
+    sum += sum >> 16;
+    return (UWORD)sum;
+}
+
+static void VerifyChecksums(struct UnitData *ud, ULONG len, UBYTE startpage, BOOL wrapped)
+{
+    const UWORD *ip = &ud->ud_RxBuffer[7];   /* after the 14 byte Ethernet header */
+    ULONG ihl, total, tlen, sum;
+    UBYTE proto;
+    BOOL bad;
+
+    if (ud->ud_RxBuffer[6] != 0x0800 || len < 14 + 20 || (ip[0] >> 12) != 4)
+        return;
+
+    ihl = ((ip[0] >> 8) & 0x0F) * 4;
+    total = ip[1];
+    if (ihl < 20 || total < ihl || total > len - 14)
+        return;
+
+    DIAG(DG_RXSUMCHECKED)++;
+    bad = fold_sum(sum_words(ip, ihl, 0)) != 0xFFFF;
+
+    /* Transport checksum, unless this is a fragment */
+    proto = ip[4] & 0xFF;
+    tlen = total - ihl;
+    if (!bad && !(ip[3] & 0x3FFF))
+    {
+        const UWORD *tp = ip + ihl / 2;
+
+        if (proto == 1)                                        /* ICMP */
+        {
+            bad = fold_sum(sum_words(tp, tlen, 0)) != 0xFFFF;
+            if (!bad && (tp[0] >> 8) == 8)
+                DIAG(DG_RXECHOREQ)++;
+        }
+        else if (proto == 6 || (proto == 17 && tlen >= 8 && tp[3] != 0))   /* TCP, UDP with checksum */
+        {
+            sum = sum_words(&ip[6], 8, proto + tlen);          /* pseudo header: addresses, protocol, length */
+            bad = fold_sum(sum_words(tp, tlen, sum)) != 0xFFFF;
+        }
+    }
+
+    if (bad)
+    {
+        DIAG(DG_RXSUMBAD)++;
+        if (wrapped)
+            DIAG(DG_RXSUMBADWRAP)++;
+        DIAG(DG_LASTSUMBAD) = ((ULONG)startpage << 16) | len;
+    }
+}
+#endif
 #define RING_COUNT_MIN  (60 + RING_OVERHEAD)    /* shortest frame the card accepts */
 #define RING_COUNT_MAX  (1514 + RING_OVERHEAD)  /* longest Ethernet frame */
 
@@ -1636,6 +1737,13 @@ LONG PacketReceived(struct UnitData *ud)
 
     len = count - RING_OVERHEAD;
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
+
+    /* A frame whose next-packet pointer is not ahead of its start went round the ring end */
+    if (next_page <= ud->ud_NextPage)
+        DIAG(DG_RXWRAPPED)++;
+#if RX_VERIFY_CHECKSUMS
+    VerifyChecksums(ud, len, ud->ud_NextPage, next_page <= ud->ud_NextPage);
+#endif
     ud->ud_NextPage = next_page;
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage == RX_BUFFER ? BUFFER_END - 1 : ud->ud_NextPage - 1;
     hw_write_barrier(ud->ud_Hardware, ud);
@@ -2042,6 +2150,17 @@ void ServiceCard(struct UnitData *ud)
     hw_write_barrier(hw, ud);
     hw_read_barrier(hw, ud);
 
+    /* Diagnostics: receive errors are not among the interrupts the driver enables, but the */
+    /* card still records them in the status register.                                     */
+    intstatus = hw->regs[NE2000_INT_STATUS];
+    DIAG(DG_INTSEEN) |= intstatus;
+    if (intstatus & INT_RXERROR)
+    {
+        DIAG(DG_RXERRINTS)++;
+        DIAG(DG_LASTRXSTATUS) = hw->regs[NE2000_RX_STATUS];
+        hw->regs[NE2000_INT_STATUS] = INT_RXERROR;
+    }
+
     while ((intstatus = (hw->regs[NE2000_INT_STATUS] & INTMASK)))
     {
         DIAG(DG_TASKSTATE) = TS_SERVICE;
@@ -2049,6 +2168,16 @@ void ServiceCard(struct UnitData *ud)
 
         if (intstatus & (INT_TXERROR | INT_TXPACKET))
         {
+            UBYTE txstatus = hw->regs[NE2000_TX_STATUS];
+
+            /* What happened on the wire, for diagnostics */
+            if (txstatus & (TXS_COLLIDED | TXS_ABORTED))
+                DIAG(DG_TXCOLLISIONS) += (txstatus & TXS_ABORTED) ? 16 : (hw->regs[NE2000_COLLISIONS] & 0x0F);
+            if (txstatus & TXS_LATE_COLLISION)
+                DIAG(DG_TXLATECOLL)++;
+            if (txstatus & TXS_CARRIER_LOST)
+                DIAG(DG_TXCARRIERLOST)++;
+
             hw->regs[NE2000_INT_STATUS] = intstatus & (INT_TXERROR | INT_TXPACKET);
             req = ud->ud_PendingWrite;
             ud->ud_PendingWrite = NULL;
@@ -2140,6 +2269,11 @@ void ServiceCard(struct UnitData *ud)
 
     /* Unmask. If something became pending since the loop ended the card interrupts at once */
     /* and IntCode() signals us again. Not if S2_OFFLINE took the card down meanwhile.      */
+    /* The card's error tallies (reading clears them) */
+    DIAG(DG_RXALIGNERRORS) += hw->regs[NE2000_CNT_ALIGN_ERRORS];
+    DIAG(DG_RXCRCERRORS) += hw->regs[NE2000_CNT_CRC_ERRORS];
+    DIAG(DG_RXMISSED) += hw->regs[NE2000_CNT_MISSED];
+
     DIAG(DG_TASKSTATE) = TS_PORT;
     ReadEClock(&perf_t1);
     DIAG(DG_TICKSSERVICE) += perf_t1.ev_lo - perf_service.ev_lo;

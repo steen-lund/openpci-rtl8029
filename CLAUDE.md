@@ -43,9 +43,12 @@ Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `bin/openpc
 Diagnosing on the real machine:
 
 - The Amiga runs Roadshow with the interface named `RTL8029`. `NetShutdown` stops the network and closes the device (exercising the unit-expunge path); `AddNetInterface RTL8029` brings it back.
-- `s2stat` on the Amiga prints the driver's counters and unit-task state (`S2_GETSPECIALSTATS`, answered in the caller's context so it works even if the unit task hangs). Run it twice a few seconds apart and compare.
+- `s2stat` on the Amiga prints the driver's counters and unit-task state (`S2_GETSPECIALSTATS`, answered in the caller's context so it works even if the unit task hangs). Run it twice a few seconds apart and compare. Besides event counts it shows time per packet for reading, hand-off and transmit (`Ticks*`), the card's own error tallies and collision counts, and `RtlConfig`. It opens the unit with the private `OPENF_MONITOR` flag (query-only), which the driver allows next to Roadshow's exclusive open; the flag value is duplicated in `s2stat.c` and `driver.c`.
+- `client <ip> BENCH` adds a 4 MB each-way TCP throughput benchmark with no disk involved (the server needs no option).
+- Setting `RX_VERIFY_CHECKSUMS` to 1 in `driver.c` makes the driver verify IP/ICMP/UDP/TCP checksums of received frames and count pings (`RxSum*`, `RxEchoReq`): use it to tell frames damaged while being read from the card from frames that never arrived.
 - The Amiga can be pinged from the development Mac; a size sweep (`ping -s <n> <amiga-ip>`, frame = n + 42) is a quick deterministic check of frame-size handling. The client/server test did not catch a bug that dropped every frame of 1511+ bytes; the sweep did.
 - `sudo tcpdump -i en0 -w file.pcap host <amiga-ip>` on the Mac shows which frames the Amiga fails to acknowledge.
+- The development Mac has two interfaces on the LAN: `en0` is Wi-Fi (192.168.1.60) and `en4` a wired USB adapter (192.168.1.97). Traffic from `en4` to the Amiga loses about 2% of full-size frames somewhere in the network (not in the driver: the same frames via `en0` all arrive, and the card reports no errors), which distorts throughput measured over that path. Check for loss with a paced ping run before trusting a benchmark.
 
 The client and server implement one fixed protocol and must be changed together: handshake, then 14 length-prefixed pattern packets (64–4096 bytes, odd and even sizes, same list in both sources) server→client, the same 14 client→server, then a packed 22-byte binary struct in each direction to check byte order. Last comes a UDP echo phase (client sends datagrams of exact sizes, server echoes them, client compares): one datagram is exactly one frame of payload + 42 bytes, covering 60 bytes and every size from 1506 to the 1514-byte maximum. This is the part that checks frame-size handling; the TCP phases cannot, because TCP retransmits and macOS quietly falls back to smaller segments when full-size ones go unanswered. Any step added on one side needs its counterpart on the other, in the same order.
 
@@ -75,9 +78,9 @@ Hardware details that matter when touching the RX/TX paths:
 
 - Card memory layout is in 256-byte pages: TX buffer at page `0x40`, RX ring from `0x46` (`RX_BUFFER`) to `0x80` (`BUFFER_END`). `ud_NextPage` is the software read pointer; the `BOUNDARY` register is kept one page behind it.
 - The byte count in the RX ring header is the Ethernet frame length plus 4. `PacketReceived()` strips those 4 bytes; passing them on makes full-size frames exceed the MTU and the TCP/IP stack drops them.
-- Remote DMA counts must be even (the data port is 16 bits wide); `SendPacket()` and `GetPacket()` round up.
+- Remote DMA counts must be even; `SendPacket()` and `GetPacket()` round up. Packet data moves through the data port 32 bits at a time (`USE_LONG_DMA`), with a final 16-bit access if needed: transfer time is almost all bus cycles, so this is where speed comes from.
 - Registers are byte-wide (`ud_Hardware->regs[]`); packet data moves through the 16-bit `DMAPort`. The card is little-endian and the CPU big-endian, so byte order of each word read from `DMAPort` is significant — `GetPacketHeader()` documents the layout, and this has been wrong and reverted more than once in git history. `ud_RxBuffer` is indexed in 16-bit words (e.g. `[6]` is the EtherType, offset 7 skips the 14-byte header).
-- Cache coherency for the memory-mapped registers: if `mmu.library` is available the region is marked cache-inhibited (`setup_cache_inhibited_hw()`); otherwise `hw_read_barrier()`/`hw_write_barrier()` fall back to `CacheClearE()`. Barrier placement has been reworked several times trading correctness against per-packet cost.
+- Cache coherency for the memory-mapped registers: at unit start `hw_is_cache_inhibited()` asks `mmu.library` for the live page properties of the registers. OpenPCI normally maps PCI space cache-inhibited, and then `hw_read_barrier()`/`hw_write_barrier()` do nothing; otherwise (or without `mmu.library`) they flush with `CacheClearE()`, which is slow. The driver never changes the mapping itself.
 
 Conventions:
 

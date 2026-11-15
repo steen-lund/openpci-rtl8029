@@ -17,7 +17,7 @@
 #include <utility/tagitem.h>
 #include <proto/exec.h>
 
-#define MAX_RECORDS 40
+#define MAX_RECORDS 64
 
 /* Private OpenDevice() flag of openpci-rtl8029.device: query-only open, allowed even when
  * the TCP/IP stack has the unit open exclusively. Must match the driver. */
