@@ -17,6 +17,7 @@ make                 # driver + Amiga test client -> bin/
 make driver          # bin/openpci-rtl8029.device (+ unstripped .debug)
 make client          # bin/client (Amiga-side test program)
 make s2stat          # bin/s2stat (Amiga-side tool printing the driver's diagnostic counters)
+make adf             # bin/openpci-rtl8029.adf: floppy image with driver + tools (needs xdftool)
 make RELEASE=1       # -O2, no debug output (default is -O0 -g -DPDEBUG)
 make clean
 
@@ -37,7 +38,7 @@ There are no automated tests; nothing can be run on the host except the server. 
 
 The user runs the Amiga side and pastes back results (the `output*.txt` files in the repo root are such captures). After changing the driver, a successful `make` is the only verification available locally — say so rather than claiming a fix works.
 
-Files reach the Amiga on a floppy image made with ADFMaster 3. Always create a **new** image: replacing files inside an existing image has produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic; compare sizes and rebuild the image before changing code).
+Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `bin/openpci-rtl8029.adf` (volume `OpenPCI`) from scratch with xdftool. Never update files inside an existing image: doing that with ADFMaster 3 produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic).
 
 Diagnosing on the real machine:
 

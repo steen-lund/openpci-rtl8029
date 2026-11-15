@@ -6,6 +6,9 @@ STRIP = $(TOOLPREFIX)strip
 TARGET  = openpci-rtl8029.device
 CLIENT_TARGET = client
 STAT_TARGET = s2stat
+ADF_TARGET = openpci-rtl8029.adf
+ADF_VOLUME = OpenPCI
+XDFTOOL = xdftool
 VERSION = 2.0
 
 RELEASE = 0
@@ -41,11 +44,12 @@ DEPS = $(OBJS:.o=.d)
 CLIENT_SRCS = AmigaOS/src/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
 
-.PHONY: all driver client s2stat clean
+.PHONY: all driver client s2stat adf clean
 all: bin/$(TARGET) bin/$(CLIENT_TARGET) bin/$(STAT_TARGET)
 s2stat: bin/$(STAT_TARGET)
 driver: bin/$(TARGET)
 client: bin/$(CLIENT_TARGET)
+adf: bin/$(ADF_TARGET)
 
 -include $(DEPS)
 
@@ -71,6 +75,16 @@ bin/$(CLIENT_TARGET): $(CLIENT_OBJS)
 bin/$(STAT_TARGET): AmigaOS/src/s2stat.o
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $^ -lm
+
+# Floppy image with the driver and the tools for copying to the real machine. Always built
+# from scratch: replacing files inside an existing image has produced corrupt copies.
+bin/$(ADF_TARGET): bin/$(TARGET) bin/$(CLIENT_TARGET) bin/$(STAT_TARGET)
+	rm -f $@
+	$(XDFTOOL) $@ format $(ADF_VOLUME) \
+		+ write bin/$(TARGET) \
+		+ write bin/$(CLIENT_TARGET) \
+		+ write bin/$(STAT_TARGET)
+	$(XDFTOOL) $@ list
 
 %.o: %.c
 	$(CC) $(TOOL_CFLAGS) -c -o $@ $<
