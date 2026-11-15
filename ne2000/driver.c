@@ -249,7 +249,7 @@ struct UnitData
     BYTE ud_ServiceBit;
     UBYTE ud_Unit;       /* unit number, index into dd_Units[] */
     UBYTE ud_IntMasked;  /* card interrupts masked by us; only decides IntCode()'s return value */
-    UBYTE ud_UseMMUCacheInhibit;  /* TRUE if using MMU lib for cache-inhibit */
+    UBYTE ud_UseMMUCacheInhibit;  /* TRUE if the registers are cache-inhibited: no barriers needed */
 #ifdef PDEBUG
     BPTR debug;
 #endif
@@ -388,36 +388,36 @@ static inline void hw_read_barrier(volatile struct Ne2000 *hw, struct UnitData *
     }
 }
 
-/* Setup cache-inhibited mapping for hardware using MMU library (if available) */
-static BOOL setup_cache_inhibited_hw(struct UnitData *ud)
+/* Finds out whether the card's registers are already mapped cache-inhibited, in which case */
+/* the cache barriers above are unnecessary. The PCI bridge software normally maps PCI      */
+/* space that way. This only asks mmu.library; it does not change the mapping (the earlier   */
+/* attempt to set the property could not work: SetProperties() needs page-aligned ranges     */
+/* and a RebuildTree() to take effect). Without mmu.library the barriers stay in use.        */
+static BOOL hw_is_cache_inhibited(struct UnitData *ud)
 {
     if (ud->ud_MMUBase)
     {
-        /* MMU library is available - mark hardware region as cache-inhibited */
-        ULONG hw_addr = (ULONG)ud->ud_Hardware;
-        ULONG hw_size = sizeof(struct Ne2000);
-
-        /* SetProperties requires MMUBase to be set for the inline call */
         struct Library *MMUBase = ud->ud_MMUBase;
+        struct TagItem notags[1] = {{TAG_DONE, 0}};
+        ULONG first = (ULONG)ud->ud_Hardware;
+        ULONG last = first + sizeof(struct Ne2000) - 1;
+        ULONG flags;
 
-        /* SetProperties(context, flags, mask, address, size, tags...)
-         * context = NULL means current context
-         * MAPP_CACHEINHIBIT = mark as cache-inhibited
-         */
-        if (SetProperties(NULL, MAPP_CACHEINHIBIT, MAPP_CACHEINHIBIT,
-                         hw_addr, hw_size, TAG_DONE))
+        /* Hardware level properties of the page(s) holding the registers */
+        flags = GetPagePropertiesA(NULL, first, notags) & GetPagePropertiesA(NULL, last, notags);
+        INIT_DBG1_U("Card register page properties: $%08lx", flags);
+
+        if (flags & (MAPP_CACHEINHIBIT | MAPP_IO))
         {
-            INIT_DBG_U("Hardware region marked as cache-inhibited via mmu.library");
+            INIT_DBG_U("Card registers are cache-inhibited, no cache flushes needed");
             return TRUE;
         }
-        else
-        {
-            INIT_DBG_U("Warning: Failed to set cache-inhibit via mmu.library, will use cache flush");
-        }
+        INIT_DBG_U("Card registers are not cache-inhibited, using cache flushes");
     }
     return FALSE;
 }
 
+///
 /// DevInit()
 // Called when the device is loaded into memory. Makes system library, initializes Library structure, opens
 // libraries used by the device. Returns device base or NULL if init failed.
@@ -980,8 +980,8 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 
             ud->ud_NextPage = RX_BUFFER;
 
-            /* Try to setup cache-inhibited mapping via MMU library */
-            ud->ud_UseMMUCacheInhibit = setup_cache_inhibited_hw(ud);
+            /* Cache barriers are only needed if the registers are not cache-inhibited already */
+            ud->ud_UseMMUCacheInhibit = hw_is_cache_inhibited(ud);
 
             HardwareReset(ud);
             HardwareInit(ud);
