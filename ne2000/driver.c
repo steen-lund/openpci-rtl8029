@@ -286,8 +286,10 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req);
 void HardwareReset(struct UnitData *ud);
 void HardwareInit(struct UnitData *ud);
 volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit, struct UnitData *ud);
-void GoOnline(struct UnitData *ud);
+BOOL GoOnline(struct UnitData *ud);
 void GoOffline(struct UnitData *ud);
+void TakeOffline(struct UnitData *ud);
+void FlushQueues(struct UnitData *ud, LONG err, LONG werr);
 void GetHwAddress(struct UnitData *ud);
 void WriteHwAddress(struct UnitData *ud);
 LONG PacketReceived(struct UnitData *ud);
@@ -553,14 +555,12 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
     case S2_GETSTATIONADDRESS:
         S2GetStationAddress(ud, req);
         break;
+    /* These reprogram the card, which only the unit task may touch */
     case S2_CONFIGINTERFACE:
-        S2ConfigInterface(ud, req);
-        break;
     case S2_ONLINE:
-        S2Online(ud, req);
-        break;
     case S2_OFFLINE:
-        S2Offline(ud, req);
+        req->ios2_Req.io_Flags &= ~IOF_QUICK;
+        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
     case S2_GETGLOBALSTATS:
         S2GetGlobalStats(ud, req);
@@ -800,6 +800,12 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
                 }
             }
         }
+
+        /* No task, or one that never opened its port: it holds no reference to the unit, */
+        /* so forget it rather than have ExpungeUnit() signal it and wait for it forever.  */
+        ud->ud_Task = NULL;
+        DeleteMsgPort(ud->ud_LifeTime);
+        ud->ud_LifeTime = NULL;
     }
     return FALSE;
 }
@@ -959,8 +965,7 @@ void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
 
     if (ud)
     {
-        if (ud->ud_Flags & UF_ONLINE)
-            GoOffline(ud);
+        /* The unit task takes the card offline and returns all requests before it exits */
         if (ud->ud_Task)
             KillTask(dd, ud);
         DBG1("Unit %ld expunged.", ud->ud_Unit);
@@ -1030,18 +1035,24 @@ void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
 ///
 /// S2Online()
 
+/* S2_ONLINE, S2_CONFIGINTERFACE and S2_OFFLINE are executed by the unit task (see         */
+/* MainLoop()), never in the caller's context: they reprogram the card.                    */
+
 void S2Online(struct UnitData *ud, struct IOSana2Req *req)
 {
     DBG_U("S2_ONLINE.");
-    ClearGlobalStats(ud);
-    if (!(ud->ud_Flags & UF_ONLINE))
+    if (!(ud->ud_Flags & UF_CONFIGURED))
+        IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_NOT_CONFIGURED);
+    else if (ud->ud_Flags & UF_ONLINE)
+        IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_ONLINE);
+    else if (GoOnline(ud))
     {
-        GoOnline(ud);
+        ClearGlobalStats(ud);
         ud->ud_Flags |= UF_ONLINE;
         IoDone(ud, req, OK, OK);
     }
     else
-        IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_ONLINE);
+        IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_GENERIC_ERROR);
     return;
 }
 
@@ -1077,16 +1088,16 @@ void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
     }
     else
     {
-        HardwareInit(ud);
+        /* Not configured means not online either: S2_ONLINE requires configuration.     */
+        /* GoOnline() resets the card and programs the new address.                      */
         CopyMem(req->ios2_SrcAddr, ud->ud_SoftAddress, 6);
-        WriteHwAddress(ud);
-        if (!(ud->ud_Flags & UF_ONLINE))
+        if (GoOnline(ud))
         {
-            GoOnline(ud);
-            ud->ud_Flags |= UF_ONLINE;
+            ud->ud_Flags |= UF_ONLINE | UF_CONFIGURED;
+            IoDone(ud, req, OK, OK);
         }
-        ud->ud_Flags |= UF_CONFIGURED;
-        IoDone(ud, req, OK, OK);
+        else
+            IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_GENERIC_ERROR);
     }
     return;
 }
@@ -1099,8 +1110,7 @@ void S2Offline(struct UnitData *ud, struct IOSana2Req *req)
     DBG_U("S2_OFFLINE.");
     if (ud->ud_Flags & UF_ONLINE)
     {
-        ud->ud_Flags &= ~UF_ONLINE;
-        GoOffline(ud);
+        TakeOffline(ud);
         IoDone(ud, req, OK, OK);
     }
     else
@@ -1253,9 +1263,12 @@ LONG InstallInterrupt(struct UnitData *ud)
         intr->is_Node.ln_Name = ud->ud_Name;
         intr->is_Data = ud;
         intr->is_Code = (APTR)IntCode;
-        pci_add_intserver(intr, ud->ud_PciDev);
-        ud->ud_Interrupt = intr;
-        return TRUE;
+        if (pci_add_intserver(intr, ud->ud_PciDev))
+        {
+            ud->ud_Interrupt = intr;
+            return TRUE;
+        }
+        FreeMem(intr, sizeof(struct Interrupt));
     }
     return FALSE;
 }
@@ -1268,8 +1281,12 @@ void RemoveInterrupt(struct UnitData *ud)
     USE_U(SysBase)
     USE_U(OpenPciBase)
 
-    pci_rem_intserver(ud->ud_Interrupt, ud->ud_PciDev);
-    FreeMem(ud->ud_Interrupt, sizeof(struct Interrupt));
+    if (ud->ud_Interrupt)
+    {
+        pci_rem_intserver(ud->ud_Interrupt, ud->ud_PciDev);
+        FreeMem(ud->ud_Interrupt, sizeof(struct Interrupt));
+        ud->ud_Interrupt = NULL;
+    }
     return;
 }
 
@@ -1363,13 +1380,22 @@ void HardwareReset(struct UnitData *ud)
 ///
 /// GoOnline()
 
-void GoOnline(struct UnitData *ud)
+/* Unit task only. Returns FALSE if the interrupt server could not be installed; the card  */
+/* is left stopped then.                                                                   */
+
+BOOL GoOnline(struct UnitData *ud)
 {
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     HardwareReset(ud);
     WriteHwAddress(ud);
-    InstallInterrupt(ud);
+
+    /* The reset put the card's ring pointers back to the start: follow them */
+    ud->ud_NextPage = RX_BUFFER;
+
+    if (!InstallInterrupt(ud))
+        return FALSE;
+
     hw->regs[NE2000_COMMAND] = 0x22;
     hw->regs[NE2000_TX_CONFIG] = 0x00;
     hw->regs[NE2000_RX_CONFIG] = RXCFG_BCAST | RXCFG_MCAST |
@@ -1379,7 +1405,7 @@ void GoOnline(struct UnitData *ud)
     hw->regs[NE2000_INT_MASK] = INTMASK;
     hw_write_barrier(hw, ud);  /* Ensure interrupt mask reaches hardware */
 
-    return;
+    return TRUE;
 }
 
 ///
@@ -1805,7 +1831,7 @@ struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue,
 ///
 /// FlushQueues()
 
-void FlushQueues(struct UnitData *ud)
+void FlushQueues(struct UnitData *ud, LONG err, LONG werr)
 {
     USE_U(SysBase)
     struct IOSana2Req *xreq;
@@ -1817,7 +1843,7 @@ void FlushQueues(struct UnitData *ud)
         if (!xreq)
             break;
         DBG1_T("<- READ [$08%lx] [F].", xreq);
-        IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
+        IoDone(ud, xreq, err, werr);
     }
     ReleaseSemaphore(&ud->ud_RxSem);
 
@@ -1828,10 +1854,35 @@ void FlushQueues(struct UnitData *ud)
         if (!xreq)
             break;
         DBG1_T("<- WRITE [$08%lx] [F].", xreq);
-        IoDone(ud, xreq, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
+        IoDone(ud, xreq, err, werr);
     }
     ReleaseSemaphore(&ud->ud_TxSem);
     return;
+}
+
+///
+/// TakeOffline()
+
+/* Unit task only. Stops the card and returns every request the driver holds with          */
+/* S2ERR_OUTOFSERVICE: the transmit in flight (its interrupt will never come now) and all  */
+/* queued reads and writes.                                                                */
+
+void TakeOffline(struct UnitData *ud)
+{
+    struct IOSana2Req *req;
+
+    if (!(ud->ud_Flags & UF_ONLINE))
+        return;
+
+    ud->ud_Flags &= ~UF_ONLINE;
+    GoOffline(ud);
+
+    if ((req = ud->ud_PendingWrite))
+    {
+        ud->ud_PendingWrite = NULL;
+        IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
+    }
+    FlushQueues(ud, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
 }
 
 ///
@@ -2010,7 +2061,14 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 
         if (signals & SIGBREAKF_CTRL_C)
         {
+            struct IOSana2Req *req;
+
+            /* The unit is going away: stop the card and hand every request back */
             DBG1_T("TASK: %s task killed.", ud->ud_Name);
+            TakeOffline(ud);
+            FlushQueues(ud, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
+            while ((req = (struct IOSana2Req *)GetMsg(port)))
+                IoDone(ud, req, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
             return;
         }
 
@@ -2031,9 +2089,27 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                     ReleaseSemaphore(&ud->ud_RxSem);
                     break;
 
+                case S2_CONFIGINTERFACE:
+                    S2ConfigInterface(ud, req);
+                    break;
+
+                case S2_ONLINE:
+                    S2Online(ud, req);
+                    break;
+
+                case S2_OFFLINE:
+                    S2Offline(ud, req);
+                    break;
+
                 case S2_BROADCAST:
                 case CMD_WRITE:
                     /* DBG1_T("-> WRITE [$%08lx].", req); */
+                    if (!(ud->ud_Flags & UF_ONLINE))
+                    {
+                        /* The card is stopped: nothing may be sent to it */
+                        IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
+                        break;
+                    }
                     DIAG(DG_WRITESQUEUED)++;
                     ObtainSemaphore(&ud->ud_TxSem);
                     AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
@@ -2043,7 +2119,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 
                 case CMD_FLUSH:
                     DBG1_T("-> FLUSH [$%08lx].", req);
-                    FlushQueues(ud);
+                    FlushQueues(ud, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
                     DBG1_T("<- FLUSH [$%08lx].", req);
                     IoDone(ud, req, OK, OK);
                     break;
