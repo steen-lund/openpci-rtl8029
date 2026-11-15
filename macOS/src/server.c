@@ -17,15 +17,12 @@
 
 // Test packet sizes to exercise different buffer scenarios
 static const size_t test_sizes[] = {
-    64,      // Minimum Ethernet payload
-    100,     // Small packet
-    256,     // 1 page
-    512,     // 2 pages
-    1024,    // 4 pages
-    1518,    // Maximum Ethernet frame (including header)
-    2048,    // Large packet
-    4096     // Very large packet
+    // Odd and even sizes are both needed: the NE2000 moves data in 16-bit words,
+    // so odd-length frames take a different path in the driver.
+    // Must match tx_test_sizes in the Amiga client.
+    64, 65, 100, 101, 256, 333, 512, 1001, 1024, 1459, 1461, 1518, 2048, 4096
 };
+#define NUM_TEST_SIZES (sizeof(test_sizes) / sizeof(test_sizes[0]))
 
 int socket_fd = -1;
 int client_socket_fd = -1;
@@ -161,7 +158,7 @@ int main()
         // Fill rest with a repeating byte pattern based on packet number
         unsigned char pattern = 0x41 + (i % 26);  // 'A' to 'Z'
         for (size_t j = header_len; j < size; j++) {
-            test_buffer[j] = pattern;
+            test_buffer[j] = (char)(pattern + ((j - header_len) % 251));
         }
 
         printf("Sending test packet %zu/%zu: %zu bytes (pattern: 0x%02X)...\n",
@@ -208,7 +205,7 @@ int main()
     // Receive test packets from client
     int rx_packet_num = 0;
     int rx_errors = 0;
-    const int expected_rx_packets = 8;  // Client sends 8 test packets
+    const int expected_rx_packets = NUM_TEST_SIZES;  // Client sends the same set of sizes
 
     while (rx_packet_num < expected_rx_packets) {
         // Read length prefix (4 bytes)
@@ -287,7 +284,7 @@ int main()
                 if (header_len < total_read) {
                     unsigned char expected_pattern = buffer[header_len];
                     for (size_t i = header_len + 1; i < total_read; i++) {
-                        if ((unsigned char)buffer[i] != expected_pattern) {
+                        if ((unsigned char)buffer[i] != (unsigned char)(expected_pattern + ((i - header_len) % 251))) {
                             pattern_ok = 0;
                             break;
                         }

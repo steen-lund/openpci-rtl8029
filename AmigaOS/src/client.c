@@ -13,13 +13,25 @@
 
 #define PORT 10203
 #define BUFFER_SIZE 8192
+
+// Odd and even sizes are both needed: the NE2000 moves data in 16-bit words,
+// so odd-length frames take a different path in the driver.
+// Must match test_sizes in the server.
+static const size_t tx_test_sizes[] = {
+    64, 65, 100, 101, 256, 333, 512, 1001, 1024, 1459, 1461, 1518, 2048, 4096
+};
+#define NUM_TEST_SIZES (sizeof(tx_test_sizes) / sizeof(tx_test_sizes[0]))
 #define MESSAGE "Hello, Server!"
 #define EXPECTED_RESPONSE "Hello, Client!"
+
+/* libnix stack swap: the shell default of 4 KB is not enough. Only honoured because the
+ * makefile links swapstack.o in with -Wl,-u,___stkinit. */
+long __stack = 32768;
 
 struct RDArgs *rdargs;
 struct Library *SocketBase;
 
-int main(int argc, char *argv[])
+int main(void)
 {
     struct sockaddr_in server_addr;
     int res;
@@ -32,7 +44,7 @@ int main(int argc, char *argv[])
     // Initialize the RDArgs structure
     rdargs = ReadArgs(template, args, NULL);
     if (!rdargs) {
-        printf("Usage: %s SERVERIP\n", argv[0]);
+        printf("Usage: client SERVERIP\n");
         return 1;
     }
 
@@ -81,7 +93,16 @@ int main(int argc, char *argv[])
     }
 
     // Receive handshake response
-    char buffer[BUFFER_SIZE];
+    /* On the heap: not on the stack (too big for it), and not static either - builds with
+     * this buffer in the BSS hunk were rejected by LoadSeg ("bad loadfile hunk"). */
+    char *buffer = malloc(BUFFER_SIZE);
+    if (!buffer) {
+        printf("Out of memory\n");
+        CloseSocket(socket_fd);
+        CloseLibrary(SocketBase);
+        FreeArgs(rdargs);
+        return 1;
+    }
     ssize_t bytes_read = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
     if (bytes_read < 0) {
         PrintFault(IoErr(), "recv");
@@ -107,7 +128,7 @@ int main(int argc, char *argv[])
     // Receive and verify test packets
     int packet_num = 0;
     int errors = 0;
-    const int expected_packets = 8;  // Server sends 8 test packets
+    const int expected_packets = NUM_TEST_SIZES;  // Server sends the same set of sizes
 
     while (packet_num < expected_packets) {
         // Read length prefix (4 bytes)
@@ -198,7 +219,7 @@ int main(int argc, char *argv[])
                 if (header_len < total_read) {
                     unsigned char expected_pattern = buffer[header_len];
                     for (size_t i = header_len + 1; i < total_read; i++) {
-                        if ((unsigned char)buffer[i] != expected_pattern) {
+                        if ((unsigned char)buffer[i] != (unsigned char)(expected_pattern + ((i - header_len) % 251))) {
                             pattern_ok = 0;
                             break;
                         }
@@ -232,11 +253,7 @@ cleanup:
     printf("\n");
     printf("RX test complete: %d packets received, %d errors\n", packet_num, errors);
 
-    // Define test sizes for TX (same as server)
-    const size_t tx_test_sizes[] = {
-        64, 100, 256, 512, 1024, 1518, 2048, 4096
-    };
-    size_t tx_num_tests = sizeof(tx_test_sizes) / sizeof(tx_test_sizes[0]);
+    size_t tx_num_tests = NUM_TEST_SIZES;
 
     printf("\nNow sending test packets to server...\n\n");
 
@@ -258,7 +275,7 @@ cleanup:
         size_t header_len = strlen(test_buffer);
         unsigned char pattern = 0x51 + (i % 26);  // 'Q' to 'Z' range
         for (size_t j = header_len; j < size; j++) {
-            test_buffer[j] = pattern;
+            test_buffer[j] = (char)(pattern + ((j - header_len) % 251));
         }
 
         printf("  Sending %zu bytes (pattern: 0x%02X)...\n", size, pattern);
@@ -476,6 +493,7 @@ final_cleanup:
     printf("\n");
     printf("Overall: RX=%d errors, TX=%d errors\n", errors, tx_errors);
 
+    free(buffer);
     CloseSocket(socket_fd);
     CloseLibrary(SocketBase);
     FreeArgs(rdargs);
