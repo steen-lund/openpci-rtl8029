@@ -169,6 +169,12 @@ If tests fail, check:
 4. Are there interrupt messages (TX/RX)?
 5. Any error messages?
 
-## Current Known Issues
+## Diagnostics
 
-- The driver drops packets and eventually stops working (stalls); root cause not yet found
+- Run `s2stat` on the Amiga (twice, a few seconds apart) to see the driver's counters and
+  what its unit task is doing.
+- From the Mac, sweep frame sizes with ping: `ping -c 3 -s 1472 <amiga_ip>` is a full-size
+  1514-byte frame; `-s 56` a small one.
+
+Note: the test now sends 14 packet sizes per direction (odd and even), not the 8 shown in
+the example output above, and the payload bytes vary instead of repeating one value.

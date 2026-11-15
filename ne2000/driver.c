@@ -132,6 +132,56 @@ struct NSDeviceQueryResult
 #define NSDEVTYPE_SANA2 7 /* A >=SANA2R2 networking device */
 
 ///
+/// diagnostics
+
+/* Diagnostic counters and state, readable at any time with S2_GETSPECIALSTATS (see the   */
+/* s2stat tool). They are copied in the caller's context, so they can be read even when    */
+/* the unit task is stuck - DG_TASKSTATE then tells where.                                 */
+
+enum
+{
+    DG_INTERRUPTS,    /* interrupts claimed by IntCode() */
+    DG_SERVICERUNS,   /* ServiceCard() calls */
+    DG_RXFRAMES,      /* frames read from the ring */
+    DG_RXDELIVERED,   /* ... handed to a pending CMD_READ */
+    DG_RXNOREADER,    /* ... dropped, no pending CMD_READ for the packet type */
+    DG_LASTDROPTYPE,  /* packet type of the last frame dropped that way */
+    DG_RXBADHEADER,   /* corrupt ring headers (each resets the ring) */
+    DG_LASTBADHEADER, /* the last corrupt ring header */
+    DG_OVERFLOWS,     /* ring overflow interrupts */
+    DG_TXSTARTED,     /* transmits started */
+    DG_TXDONE,        /* transmit interrupts, ok */
+    DG_TXERRORS,      /* transmit interrupts, error */
+    DG_TXNOPENDING,   /* transmit interrupts with no request in flight */
+    DG_TXDMATIMEOUT,  /* upload to the card did not report completion */
+    DG_READSQUEUED,   /* CMD_READ requests received */
+    DG_WRITESQUEUED,  /* CMD_WRITE/S2_BROADCAST requests received */
+    DG_TXPENDING,     /* 1 if a transmit is in flight */
+    DG_NEXTPAGE,      /* driver's ring read pointer */
+    DG_LASTCURRENT,   /* card's ring write pointer when last read */
+    DG_LASTINTSTATUS, /* last non-zero interrupt status seen by ServiceCard() */
+    DG_TASKSTATE,     /* what the unit task is doing, TS_* */
+    DG_COUNT
+};
+
+#define TS_WAITING   0 /* in Wait() */
+#define TS_PORT      1 /* handling requests */
+#define TS_SERVICE   2 /* in ServiceCard() */
+#define TS_RXDRAIN   3 /* reading packets from the ring */
+#define TS_SEND      4 /* in SendPacket() */
+#define TS_OVERFLOW  5 /* in BufferOverflow() */
+
+static const char *const DiagNames[DG_COUNT] =
+{
+    "Interrupts", "ServiceRuns", "RxFrames", "RxDelivered", "RxNoReader", "LastDropType", "RxBadHeader",
+    "LastBadHeader", "Overflows", "TxStarted", "TxDone", "TxErrors", "TxNoPending",
+    "TxDmaTimeout", "ReadsQueued", "WritesQueued", "TxPending", "NextPage", "LastCurrent",
+    "LastIntStatus", "TaskState"
+};
+
+#define DIAG(n) (ud->ud_Diag[n])
+
+///
 /// device structures
 
 struct DevData
@@ -173,15 +223,17 @@ struct UnitData
     struct IOSana2Req *ud_PendingWrite;
     struct pci_dev* ud_PciDev;
     ULONG ud_OpenCnt;
-    ULONG ud_GoWriteMask;
+    ULONG ud_ServiceMask;
     UWORD ud_RxBuffer[768];
     UBYTE ud_Name[27];
     UBYTE ud_EtherAddress[6];
     UBYTE ud_SoftAddress[6];
     struct Sana2DeviceStats ud_DevStats;
+    ULONG ud_Diag[DG_COUNT];
     UBYTE ud_Flags;
     UBYTE ud_NextPage;
-    BYTE ud_GoWriteBit;
+    BYTE ud_ServiceBit;
+    UBYTE ud_IntMasked;  /* card interrupts masked by us; only decides IntCode()'s return value */
     UBYTE ud_UseMMUCacheInhibit;  /* TRUE if using MMU lib for cache-inhibit */
 #ifdef PDEBUG
     BPTR debug;
@@ -228,6 +280,7 @@ void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req);
 void S2Online(struct UnitData *ud, struct IOSana2Req *req);
 void S2Offline(struct UnitData *ud, struct IOSana2Req *req);
 void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req);
+void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req);
 
 void HardwareReset(struct UnitData *ud);
 void HardwareInit(struct UnitData *ud);
@@ -269,6 +322,7 @@ UWORD NSDSupported[] =
         S2_CONFIGINTERFACE,
         S2_BROADCAST,
         S2_GETGLOBALSTATS,
+        S2_GETSPECIALSTATS,
         S2_ONLINE,
         S2_OFFLINE,
         NSCMD_DEVICEQUERY,
@@ -510,6 +564,9 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
     case S2_GETGLOBALSTATS:
         S2GetGlobalStats(ud, req);
         break;
+    case S2_GETSPECIALSTATS:
+        S2GetSpecialStats(ud, req);
+        break;
 
     case CMD_READ:
         /* DBG1("CMD_READ [$%08lx].", (LONG)req); */
@@ -538,7 +595,6 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
     case S2_TRACKTYPE:
     case S2_UNTRACKTYPE:
     case S2_GETTYPESTATS:
-    case S2_GETSPECIALSTATS:
     case S2_ONEVENT:
     case S2_READORPHAN:
         IoDone(ud, req, S2ERR_NOT_SUPPORTED, S2WERR_GENERIC_ERROR);
@@ -561,8 +617,8 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
     LONG ret = 0;
     struct UnitData *ud = (struct UnitData *)req->ios2_Req.io_Unit;
     struct MinList *list;
-    struct SignalSemaphore *sem;
     struct MinNode *node;
+    struct SignalSemaphore *sem = NULL;
 
     DBG1("DevAbortIo: aborting $%08lx.", req);
     switch (req->ios2_Req.io_Command)
@@ -594,6 +650,7 @@ ULONG DevAbortIO(register struct IOSana2Req *req reg(a1), register struct DevDat
                     req->ios2_Req.io_Error = IOERR_ABORTED;
                     ReplyMsg((struct Message *)node);
                     ret = 0;
+                    break;
                 }
             }
         }
@@ -721,6 +778,7 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
                 NP_Entry, (LONG)UnitTask,
                 NP_Name, (LONG)ud->ud_Name,
                 NP_Priority, 6,
+                NP_StackSize, 16384, /* SendPacket() keeps a full frame on the stack */
                 TAG_END)))
         {
             WORD i;
@@ -857,14 +915,14 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
             ud->ud_RxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_RxQueue.mlh_Head;
-
             InitSemaphore(&ud->ud_RxSem);
+
 
             ud->ud_TxQueue.mlh_Head = (struct MinNode *)&ud->ud_TxQueue.mlh_Tail;
             ud->ud_TxQueue.mlh_Tail = NULL;
             ud->ud_TxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_TxQueue.mlh_Head;
-
             InitSemaphore(&ud->ud_TxSem);
+
 
             ud->ud_NextPage = RX_BUFFER;
 
@@ -1034,8 +1092,8 @@ void S2Offline(struct UnitData *ud, struct IOSana2Req *req)
     DBG_U("S2_OFFLINE.");
     if (ud->ud_Flags & UF_ONLINE)
     {
-        GoOffline(ud);
         ud->ud_Flags &= ~UF_ONLINE;
+        GoOffline(ud);
         IoDone(ud, req, OK, OK);
     }
     else
@@ -1057,6 +1115,35 @@ void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req)
     }
     else
         IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
+}
+
+///
+/// S2GetSpecialStats()
+
+void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
+{
+    struct Sana2SpecialStatHeader *hdr = (struct Sana2SpecialStatHeader *)req->ios2_StatData;
+    struct Sana2SpecialStatRecord *rec;
+    ULONG i;
+
+    if (!hdr)
+    {
+        IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
+        return;
+    }
+
+    DIAG(DG_TXPENDING) = ud->ud_PendingWrite ? 1 : 0;
+    DIAG(DG_NEXTPAGE) = ud->ud_NextPage;
+
+    rec = (struct Sana2SpecialStatRecord *)(hdr + 1);
+    for (i = 0; i < DG_COUNT && i < hdr->RecordCountMax; i++)
+    {
+        rec[i].Type = (S2WireType_Ethernet << 16) | i;
+        rec[i].Count = DIAG(i);
+        rec[i].String = (STRPTR)DiagNames[i];
+    }
+    hdr->RecordCountSupplied = i;
+    IoDone(ud, req, OK, OK);
 }
 
 ///
@@ -1105,96 +1192,43 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 
 /// IntCode()
 
+/* Interrupt server. It does no packet work: it only masks the card's interrupts (which   */
+/* releases the PCI interrupt line) and signals the unit task. ServiceCard() in the unit   */
+/* task handles the events and unmasks again. All other access to the card happens in the  */
+/* unit task, so nothing needs Disable() and no semaphores are used in interrupt context.  */
+/*                                                                                         */
+/* The interrupt chain is shared, so this is also called for other devices' interrupts,    */
+/* possibly while the unit task has register page 1 selected. The unit task only selects   */
+/* page 1 with the card's interrupts masked, so in that case the interrupt is not ours.    */
+
 LONG IntCode(register struct UnitData *ud reg(a1))
 {
     USE_U(SysBase)
-    UBYTE intstatus;
-    struct IOSana2Req *req;
-    LONG my_int = 0;
+    volatile struct Ne2000 *hw = ud->ud_Hardware;
+    UBYTE was_masked;
 
-    /* Ensure we read fresh interrupt status from hardware, not cached value */
-    hw_read_barrier(ud->ud_Hardware, ud);
+    /* Ensure we read fresh values from hardware, not cached ones */
+    hw_read_barrier(hw, ud);
 
-    while ((intstatus = (ud->ud_Hardware->regs[NE2000_INT_STATUS] & INTMASK)))
-    {
-        if (intstatus & INT_TXERROR)
-        {
-            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXERROR;
-            req = ud->ud_PendingWrite;
-            ud->ud_PendingWrite = NULL;
-            IoDone(ud, req, S2ERR_TX_FAILURE, S2WERR_TOO_MANY_RETIRES);
-            Signal(ud->ud_Task, ud->ud_GoWriteMask);
-            my_int = 1;
-        }
+    if (hw->regs[NE2000_COMMAND] & (COMMAND_PAGE1 | COMMAND_PAGE2))
+        return 0;
 
-        if (intstatus & INT_TXPACKET)
-        {
-            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_TXPACKET;
-            req = ud->ud_PendingWrite;
-            ud->ud_PendingWrite = NULL;
-            ud->ud_DevStats.PacketsSent++;
-            IoDone(ud, req, OK, OK);
-            Signal(ud->ud_Task, ud->ud_GoWriteMask);
-            my_int = 1;
-        }
+    if (!(hw->regs[NE2000_INT_STATUS] & INTMASK))
+        return 0;
 
-        if (intstatus & INT_OVERFLOW)
-        {
-            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
-            BufferOverflow(ud);
-            my_int = 1;
-        }
-
-        if (intstatus & INT_RXPACKET)
-        {
-            ULONG offset, len;
-            UWORD mask = 0xFFFF;
-            WORD i;
-            WORD packet_count = 0;
-            const WORD MAX_PACKETS_PER_INT = 64;  /* Prevent infinite loops */
-
-            /* Clear interrupt once before processing all packets */
-            ud->ud_Hardware->regs[NE2000_INT_STATUS] = INT_RXPACKET;
-            hw_write_barrier(ud->ud_Hardware, ud);
-
-            /* Single read barrier at start of RX processing for efficiency */
-            hw_read_barrier(ud->ud_Hardware, ud);
-
-            while (RingBufferNotEmpty(ud) && packet_count < MAX_PACKETS_PER_INT)
-            {
-                packet_count++;
-                len = PacketReceived(ud);
-
-                /* Validate packet length - if corrupt, reset ring buffer */
-                if (len < 60 || len > 1518)
-                {
-                    DBG1_U("Corrupt packet detected (len=%ld), resetting ring buffer", len);
-                    BufferOverflow(ud);
-                    break;
-                }
-
-                if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
-                {
-                    if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
-                        offset = 0;
-                    else
-                        offset = 7;
-                    ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo(req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
-                    CopyMem(&ud->ud_RxBuffer[0], req->ios2_DstAddr, 6);
-                    CopyMem(&ud->ud_RxBuffer[3], req->ios2_SrcAddr, 6);
-                    req->ios2_DataLength = len - (offset << 1);
-                    for (i = 2; i >= 0; i--)
-                        mask &= ud->ud_RxBuffer[i];
-                    if (mask == 0xFFFF)
-                        req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
-                    ud->ud_DevStats.PacketsReceived++;
-                    IoDone(ud, req, OK, OK);
-                }
-            }
-            my_int = 1;
-        }
-    }
-    return my_int;
+    /* Always mask and signal when something is pending, so the line is released whatever  */
+    /* the flag says. The flag only decides whether to claim the interrupt: when the card   */
+    /* was already masked it cannot have raised this one, so let the other servers on the   */
+    /* shared chain have it.                                                                */
+    was_masked = ud->ud_IntMasked;
+    hw->regs[NE2000_INT_MASK] = 0;
+    hw_write_barrier(hw, ud);
+    ud->ud_IntMasked = TRUE;
+    Signal(ud->ud_Task, ud->ud_ServiceMask);
+    if (was_masked)
+        return 0;
+    DIAG(DG_INTERRUPTS)++;
+    return 1;
 }
 
 ///
@@ -1334,6 +1368,7 @@ void GoOnline(struct UnitData *ud)
     hw->regs[NE2000_RX_CONFIG] = RXCFG_BCAST | RXCFG_MCAST |
                                  ((ud->ud_Flags & UF_PROMISCUOUS) ? RXCFG_PROM : 0);
     hw->regs[NE2000_INT_STATUS] = 0xFF;
+    ud->ud_IntMasked = FALSE;
     hw->regs[NE2000_INT_MASK] = INTMASK;
     hw_write_barrier(hw, ud);  /* Ensure interrupt mask reaches hardware */
 
@@ -1410,12 +1445,6 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *u
     /* Pack into result with proper layout for our code */
     result = ((ULONG)status) | ((ULONG)next_page << 8) | ((ULONG)len_lo << 16) | ((ULONG)len_hi << 24);
 
-#if PDEBUG
-    /* Ignore multicast packets*/
-    if (!(status & 0x20))
-        DBG1("GetPacketHeader(): header = $%08lx.", result);
-#endif
-
     return result;
 }
 
@@ -1426,8 +1455,12 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 {
     UWORD count;
 
-    ne->regs[NE2000_DMA_COUNTER0] = len & 0xFF;
-    ne->regs[NE2000_DMA_COUNTER1] = len >> 8;
+    /* The data port is 16 bits wide, so the remote DMA count must be even: with an odd    */
+    /* count the chip's byte counter steps past zero and the transfer never completes.     */
+    /* Reading one byte more from the ring is harmless.                                    */
+    count = (len + 1) & ~1;
+    ne->regs[NE2000_DMA_COUNTER0] = count & 0xFF;
+    ne->regs[NE2000_DMA_COUNTER1] = count >> 8;
     ne->regs[NE2000_DMA_START_ADDR0] = 4;
     ne->regs[NE2000_DMA_START_ADDR1] = startpage;
     ne->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_READ;
@@ -1450,59 +1483,41 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 ///
 /// PacketReceived()
 
+/* Reads the next packet from the ring into ud_RxBuffer. Returns the frame length (Ethernet */
+/* header + data, without the CRC), or 0 if the ring header is corrupt (nothing is read      */
+/* then; the caller must reset the ring).                                                    */
+/* No debug output per packet: serial output takes far longer than a packet.                 */
+
+/* The byte count in the ring header is 4 more than the Ethernet frame (header + data).   */
+/* Passing those 4 bytes on made a full sized frame look longer than the MTU to the TCP/IP  */
+/* stack, which then dropped it: frames of 1511 bytes and more never got through.            */
+#define RING_OVERHEAD   4
+#define RING_COUNT_MIN  (60 + RING_OVERHEAD)    /* shortest frame the card accepts */
+#define RING_COUNT_MAX  (1514 + RING_OVERHEAD)  /* longest Ethernet frame */
+
 LONG PacketReceived(struct UnitData *ud)
 {
-    ULONG header, len;
+    ULONG header, count, len;
     UBYTE next_page;
 
+    /* Header layout from GetPacketHeader: status, next page, count low, count high */
     header = GetPacketHeader(ud->ud_Hardware, ud->ud_NextPage, ud);
-
-    /* Header layout from GetPacketHeader:
-     * Byte 0: Receive Status (bit 0x20 = multicast)
-     * Byte 1: Next Page Pointer
-     * Byte 2: Length Low byte
-     * Byte 3: Length High byte
-     */
-    BOOL mc = (header & 0x20) != 0;  // Multicast bit in byte 0
-    if (!mc)
-    {
-        DBG1("Header: $%08lx.", header);
-        DBG1("  Byte 0 (status): $%02lx", (header >> 0) & 0xFF);
-        DBG1("  Byte 1 (next_page): $%02lx", (header >> 8) & 0xFF);
-        DBG1("  Byte 2 (len_lo): $%02lx", (header >> 16) & 0xFF);
-        DBG1("  Byte 3 (len_hi): $%02lx", (header >> 24) & 0xFF);
-    }
-
-    /* Extract next page from byte 1 */
     next_page = (header >> 8) & 0xFF;
+    count = ((header >> 16) & 0xFF) | (((header >> 24) & 0xFF) << 8);
 
-    /* Extract length: len_lo in byte 2, len_hi in byte 3 */
-    len = ((header >> 16) & 0xFF) | (((header >> 24) & 0xFF) << 8);
-    if (!mc)
+    /* Validate BEFORE reading: the length is used as DMA count into ud_RxBuffer, which */
+    /* only holds one maximum sized frame.                                             */
+    if (next_page < RX_BUFFER || next_page >= BUFFER_END || count < RING_COUNT_MIN || count > RING_COUNT_MAX)
     {
-        DBG1("Packet length: %ld.", len);
-        /* Calculate expected pages for verification */
-        ULONG expected_pages = (len + 4 + 255) >> 8;
-        UBYTE calculated_next = ud->ud_NextPage + expected_pages;
-        if (calculated_next >= BUFFER_END)
-            calculated_next -= (BUFFER_END - RX_BUFFER);
-        DBG1("Expected pages: %ld", expected_pages);
-        DBG1("Calculated next: $%02lx", calculated_next);
+        DBG1_U("Corrupt ring header $%08lx, resetting ring buffer", header);
+        DIAG(DG_RXBADHEADER)++;
+        DIAG(DG_LASTBADHEADER) = header;
+        return 0;
     }
 
-    /* Validate next_page is within ring buffer bounds (RX_BUFFER to BUFFER_END) */
-    if (next_page < RX_BUFFER || next_page >= BUFFER_END)
-    {
-        DBG1_U("Invalid next_page $%02lx, using current+1", next_page);
-        next_page = ud->ud_NextPage + 1;
-        if (next_page >= BUFFER_END)
-            next_page = RX_BUFFER;
-    }
-
+    len = count - RING_OVERHEAD;
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
     ud->ud_NextPage = next_page;
-    if (!mc)
-        DBG1("Next page: $%02lx.", ud->ud_NextPage);
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage == RX_BUFFER ? BUFFER_END - 1 : ud->ud_NextPage - 1;
     return len;
 }
@@ -1517,10 +1532,15 @@ void BufferOverflow(struct UnitData *ud)
     UBYTE txp, resent = FALSE, intstatus;
 
     DBG_U("Overflow detected.");
+    DIAG(DG_TASKSTATE) = TS_OVERFLOW;
 
     txp = hw->regs[NE2000_COMMAND] & COMMAND_TXP;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
+
+    /* The chip needs up to 1.6 ms to finish a transfer in progress. Called from the unit */
+    /* task only (never from the interrupt server), so Delay() is allowed here.            */
     Delay(1);
+
     hw->regs[NE2000_DMA_COUNTER0] = 0;
     hw->regs[NE2000_DMA_COUNTER1] = 0;
 
@@ -1556,7 +1576,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE ethbuffer[1536], *datapointer;
     UWORD *ethdata = (UWORD *)ethbuffer;
-    ULONG data_len = req->ios2_DataLength;
+    ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
 
     /* If not raw packets, fill in Dst, Src and Type fields of Ethernet frame. 'datapointer' is a vairable */
@@ -1594,8 +1614,22 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* Now the packet is ready to send it to NIC buffer. It is done by Remote Write DMA command. Firstly   */
     /* write addres and counter should be initialized, then command register.                              */
 
-    hw->regs[NE2000_DMA_COUNTER0] = data_len & 0xFF;
-    hw->regs[NE2000_DMA_COUNTER1] = data_len >> 8;
+    /* Receive uses the same remote DMA channel. Both run in the unit task only, so they     */
+    /* cannot interleave.                                                                     */
+
+    /* The data port is 16 bits wide, so the remote DMA count must be even: with an odd     */
+    /* count the chip's byte counter steps past zero and INT_DMAFINISH never comes. Upload    */
+    /* one pad byte more; the transmit count below stays exact.                               */
+
+    ethbuffer[data_len] = 0;
+    dma_len = (data_len + 1) & ~1;
+
+    DIAG(DG_TASKSTATE) = TS_SEND;
+    DIAG(DG_TXSTARTED)++;
+
+    hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH; /* may be left set by a receive */
+    hw->regs[NE2000_DMA_COUNTER0] = dma_len & 0xFF;
+    hw->regs[NE2000_DMA_COUNTER1] = dma_len >> 8;
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_WRITE;
@@ -1608,9 +1642,16 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
 
-    while (!(hw->regs[NE2000_INT_STATUS] & INT_DMAFINISH))
+    /* Bounded: never spin forever if the flag does not show up.                               */
+
+    for (cycles = 10000; cycles && !(hw->regs[NE2000_INT_STATUS] & INT_DMAFINISH); cycles--)
     {
         hw_read_barrier(hw, ud);  /* Ensure we read fresh status, not cached */
+    }
+    if (!cycles)
+    {
+        DBG_U("SendPacket(): no DMA finished flag after upload.");
+        DIAG(DG_TXDMATIMEOUT)++;
     }
     hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH;
 
@@ -1697,9 +1738,10 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
-    /* Note: Cache barriers done once per interrupt in caller for efficiency */
+    /* Page 1 may only be selected with the card's interrupts masked, see IntCode(). */
     current = hw->regs[NE2000_CURRENT_PAGE];
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
+    DIAG(DG_LASTCURRENT) = current;
 
     if (ud->ud_NextPage == current)
         return FALSE;
@@ -1770,6 +1812,158 @@ void FlushQueues(struct UnitData *ud)
 }
 
 ///
+/// StartNextWrite()
+
+/* Starts transmission of the next queued packet unless one is still in flight.            */
+/* ud_PendingWrite is only touched by the unit task: set here, cleared in ServiceCard().   */
+
+void StartNextWrite(struct UnitData *ud)
+{
+    USE_U(SysBase)
+    struct IOSana2Req *req;
+
+    if (ud->ud_PendingWrite)
+        return;
+
+    ObtainSemaphore(&ud->ud_TxSem);
+    req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
+    ReleaseSemaphore(&ud->ud_TxSem);
+
+    if (req)
+    {
+        ud->ud_PendingWrite = req;
+        SendPacket(ud, req);
+    }
+}
+
+///
+/// ServiceCard()
+
+/* Handles all pending card events in the unit task, after IntCode() masked the card and   */
+/* signalled us. The card's interrupts stay masked for the whole function (which is what   */
+/* allows register page 1 to be selected, see IntCode()) and are unmasked at the end.      */
+
+void ServiceCard(struct UnitData *ud)
+{
+    USE_U(SysBase)
+    volatile struct Ne2000 *hw = ud->ud_Hardware;
+    struct IOSana2Req *req;
+    UBYTE intstatus;
+
+    if (!(ud->ud_Flags & UF_ONLINE))
+        return;
+
+    DIAG(DG_SERVICERUNS)++;
+
+    hw->regs[NE2000_INT_MASK] = 0;
+    ud->ud_IntMasked = TRUE;
+    hw_write_barrier(hw, ud);
+    hw_read_barrier(hw, ud);
+
+    while ((intstatus = (hw->regs[NE2000_INT_STATUS] & INTMASK)))
+    {
+        DIAG(DG_TASKSTATE) = TS_SERVICE;
+        DIAG(DG_LASTINTSTATUS) = intstatus;
+
+        if (intstatus & (INT_TXERROR | INT_TXPACKET))
+        {
+            hw->regs[NE2000_INT_STATUS] = intstatus & (INT_TXERROR | INT_TXPACKET);
+            req = ud->ud_PendingWrite;
+            ud->ud_PendingWrite = NULL;
+            if (req)
+            {
+                if (intstatus & INT_TXERROR)
+                {
+                    DIAG(DG_TXERRORS)++;
+                    IoDone(ud, req, S2ERR_TX_FAILURE, S2WERR_TOO_MANY_RETIRES);
+                }
+                else
+                {
+                    DIAG(DG_TXDONE)++;
+                    ud->ud_DevStats.PacketsSent++;
+                    IoDone(ud, req, OK, OK);
+                }
+            }
+            else
+                DIAG(DG_TXNOPENDING)++;
+        }
+
+        if (intstatus & INT_OVERFLOW)
+        {
+            hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
+            DIAG(DG_OVERFLOWS)++;
+            BufferOverflow(ud);
+        }
+
+        if (intstatus & INT_RXPACKET)
+        {
+            ULONG offset, len;
+            UWORD mask;
+            WORD i;
+
+            /* Clear before draining: a packet arriving meanwhile sets it again */
+            hw->regs[NE2000_INT_STATUS] = INT_RXPACKET;
+            hw_write_barrier(hw, ud);
+            hw_read_barrier(hw, ud);
+
+            while (RingBufferNotEmpty(ud))
+            {
+                DIAG(DG_TASKSTATE) = TS_RXDRAIN;
+                len = PacketReceived(ud);
+
+                /* PacketReceived() returns 0 for a corrupt ring header - reset the ring */
+                if (!len)
+                {
+                    BufferOverflow(ud);
+                    break;
+                }
+                DIAG(DG_RXFRAMES)++;
+
+                if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
+                {
+                    if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
+                        offset = 0;
+                    else
+                        offset = 7;
+                    ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo(req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
+                    CopyMem(&ud->ud_RxBuffer[0], req->ios2_DstAddr, 6);
+                    CopyMem(&ud->ud_RxBuffer[3], req->ios2_SrcAddr, 6);
+                    req->ios2_DataLength = len - (offset << 1);
+                    mask = 0xFFFF;
+                    for (i = 2; i >= 0; i--)
+                        mask &= ud->ud_RxBuffer[i];
+                    if (mask == 0xFFFF)
+                        req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
+                    ud->ud_DevStats.PacketsReceived++;
+                    DIAG(DG_RXDELIVERED)++;
+                    IoDone(ud, req, OK, OK);
+                }
+                else
+                {
+                    DIAG(DG_RXNOREADER)++;
+                    DIAG(DG_LASTDROPTYPE) = ud->ud_RxBuffer[6];
+                }
+            }
+        }
+
+        /* Keep transmitting while a long receive burst is being drained */
+        StartNextWrite(ud);
+    }
+
+    StartNextWrite(ud);
+
+    /* Unmask. If something became pending since the loop ended the card interrupts at once */
+    /* and IntCode() signals us again. Not if S2_OFFLINE took the card down meanwhile.      */
+    DIAG(DG_TASKSTATE) = TS_PORT;
+    if (ud->ud_Flags & UF_ONLINE)
+    {
+        ud->ud_IntMasked = FALSE; /* before the write, see IntCode() */
+        hw->regs[NE2000_INT_MASK] = INTMASK;
+        hw_write_barrier(hw, ud);
+    }
+}
+
+///
 /// MainLoop()
 
 void MainLoop(struct UnitData *ud, struct MsgPort *port)
@@ -1777,7 +1971,6 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
     USE_U(SysBase)
     USE_UD(DOSBase)
     ULONG signals, sigmask;
-    struct IOSana2Req *req;
 
 #ifdef PDEBUG
     UBYTE wname[60], *ptr;
@@ -1792,17 +1985,13 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
     for (;;)
     {
         /* DBG_T("Waiting..."); */
-        signals = Wait(SIGBREAKF_CTRL_C | sigmask | ud->ud_GoWriteMask);
+        DIAG(DG_TASKSTATE) = TS_WAITING;
+        signals = Wait(SIGBREAKF_CTRL_C | sigmask | ud->ud_ServiceMask);
+        DIAG(DG_TASKSTATE) = TS_PORT;
 
-        if (signals & ud->ud_GoWriteMask)
+        if (signals & ud->ud_ServiceMask)
         {
-            /* DBG_T("GoWrite"); */
-            ObtainSemaphore(&ud->ud_TxSem);
-            req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
-            ReleaseSemaphore(&ud->ud_TxSem);
-            ud->ud_PendingWrite = req;
-            if (req)
-                SendPacket(ud, req);
+            ServiceCard(ud);
         }
 
         if (signals & SIGBREAKF_CTRL_C)
@@ -1822,6 +2011,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                 {
                 case CMD_READ:
                     /* DBG1_T("-> READ [$%08lx].", req); */
+                    DIAG(DG_READSQUEUED)++;
                     ObtainSemaphore(&ud->ud_RxSem);
                     AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
                     ReleaseSemaphore(&ud->ud_RxSem);
@@ -1830,18 +2020,11 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                 case S2_BROADCAST:
                 case CMD_WRITE:
                     /* DBG1_T("-> WRITE [$%08lx].", req); */
-                    if (ud->ud_PendingWrite)
-                    {
-                        ObtainSemaphore(&ud->ud_TxSem);
-                        AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
-                        ReleaseSemaphore(&ud->ud_TxSem);
-                    }
-                    else
-                    {
-                        ud->ud_PendingWrite = req;
-                        SendPacket(ud, req);
-                        /* DBG_T("Packet sent 2."); */
-                    }
+                    DIAG(DG_WRITESQUEUED)++;
+                    ObtainSemaphore(&ud->ud_TxSem);
+                    AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
+                    ReleaseSemaphore(&ud->ud_TxSem);
+                    StartNextWrite(ud);
                     break;
 
                 case CMD_FLUSH:
@@ -1864,7 +2047,10 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 
 void UnitTask(void)
 {
-    struct Library *SysBase = *(struct Library **)4;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+    struct Library *SysBase = *(struct Library **)4; /* AbsExecBase */
+#pragma GCC diagnostic pop
     struct Task *task;
     struct MsgPort *port;
     struct UnitData *ud;
@@ -1878,11 +2064,11 @@ void UnitTask(void)
         WaitPort(port);
         RemPort(port);
         ud = (struct UnitData *)GetMsg(port);
-        if ((ud->ud_GoWriteBit = AllocSignal(-1)) != -1)
+        if ((ud->ud_ServiceBit = AllocSignal(-1)) != -1)
         {
-            ud->ud_GoWriteMask = 1 << ud->ud_GoWriteBit;
+            ud->ud_ServiceMask = 1 << ud->ud_ServiceBit;
             MainLoop(ud, port);
-            FreeSignal(ud->ud_GoWriteBit);
+            FreeSignal(ud->ud_ServiceBit);
         }
         DeleteMsgPort(port);
         Forbid();
