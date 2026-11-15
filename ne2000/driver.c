@@ -54,6 +54,7 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define UF_CONFIGURED   0x01
 #define UF_ONLINE       0x02
 #define UF_PROMISCUOUS  0x04
+#define UF_EXCLUSIVE    0x08    /* opened with SANA2OPF_MINE */
 
 // Macro for registerized parameters (used in some OS functions).
 
@@ -233,6 +234,7 @@ struct UnitData
     UBYTE ud_Flags;
     UBYTE ud_NextPage;
     BYTE ud_ServiceBit;
+    UBYTE ud_Unit;       /* unit number, index into dd_Units[] */
     UBYTE ud_IntMasked;  /* card interrupts masked by us; only decides IntCode()'s return value */
     UBYTE ud_UseMMUCacheInhibit;  /* TRUE if using MMU lib for cache-inhibit */
 #ifdef PDEBUG
@@ -853,10 +855,14 @@ struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
             return NULL;
     }
 
-    /* Check exclusive flag - reject if already opened by someone else. */
+    /* Exclusive access: reject an exclusive open of a unit somebody else has open, and any */
+    /* open of a unit somebody else holds exclusively.                                      */
 
-    if ((flags & SANA2OPF_MINE) && ud->ud_OpenCnt)
+    if (ud->ud_OpenCnt && ((flags & SANA2OPF_MINE) || (ud->ud_Flags & UF_EXCLUSIVE)))
         return NULL;
+
+    if (flags & SANA2OPF_MINE)
+        ud->ud_Flags |= UF_EXCLUSIVE;
 
     /* Set promiscuous flag if requested - we konw here MINE was requested too, and noone else has opened */
     /* the unit. So we can just set it if requested. */
@@ -894,6 +900,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
     DBG("InitializeUnit() called.");
     if ((ud = AllocMem(sizeof(struct UnitData), MEMF_PUBLIC | MEMF_CLEAR)))
     {
+        ud->ud_Unit = unit;
         if ((ud->ud_Hardware = FindHardware(dd, unit, ud)))
         {
 #ifdef PDEBUG
@@ -950,18 +957,19 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 void ExpungeUnit(struct DevData *dd, struct UnitData *ud)
 {
     USE(SysBase)
-    WORD unit;
 
     if (ud)
     {
-        unit = ud->ud_Name[24] - '0';
         if (ud->ud_Flags & UF_ONLINE)
             GoOffline(ud);
         if (ud->ud_Task)
             KillTask(dd, ud);
+        DBG1("Unit %ld expunged.", ud->ud_Unit);
+
+        /* The unit may not have got as far as being registered (or even named) */
+        if (dd->dd_Units[ud->ud_Unit] == ud)
+            dd->dd_Units[ud->ud_Unit] = NULL;
         FreeMem(ud, sizeof(struct UnitData));
-        dd->dd_Units[unit] = NULL;
-        DBG1("%s expunged.", ud->ud_Name);
     }
     return;
 }
