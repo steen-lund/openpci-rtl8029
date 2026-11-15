@@ -25,7 +25,7 @@ cd macOS/src && make -f Makefile.server   # host-side test server -> macOS/src/s
 
 - The build uses `-Wall -Werror`; any warning fails it.
 - `include/` holds third-party headers the toolchain does not ship: the openpci.library SDK (Aminet `driver/other/openpci68k.lha`), mmu.library (MuManual from NDK 3.2) and `devices/sana2.h` (NDK 3.2). `include/proto/*.h` and `include/inline/*.h` are generated — do not hand-edit; regenerate from `include/fd/*.fd` with `fd2sfd <fd> <clib protos> -o x.sfd` then `sfdc --target=m68k-amigaos --mode=macros|proto`.
-- The Amiga-side tools (`client`, `s2stat`) are linked against libnix (`-noixemul`), not the toolchain's default newlib, and with `-Wl,-u,___stkinit` so that the `__stack` variable in their sources takes effect (a shell's default stack is 4 KB). Keep large buffers off the stack and out of static storage: a client build with an 8 KB static buffer was rejected by LoadSeg on the real machine ("bad loadfile hunk"), cause unknown.
+- The Amiga-side tools (`client`, `s2stat`) are linked against libnix (`-noixemul`), not the toolchain's default newlib, and with `-Wl,-u,___stkinit` so that the `__stack` variable in their sources takes effect (a shell's default stack is 4 KB). Keep large buffers off the stack.
 - Driver sources live in `ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
 
 ## Testing
@@ -36,6 +36,8 @@ There are no automated tests; nothing can be run on the host except the server. 
 2. Copy `bin/openpci-rtl8029.device` to `DEVS:Networks/` and `bin/client` to the Amiga, then run `client SERVERIP <ip>`.
 
 The user runs the Amiga side and pastes back results (the `output*.txt` files in the repo root are such captures). After changing the driver, a successful `make` is the only verification available locally — say so rather than claiming a fix works.
+
+Files reach the Amiga on a floppy image made with ADFMaster 3. Always create a **new** image: replacing files inside an existing image has produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic; compare sizes and rebuild the image before changing code).
 
 Diagnosing on the real machine:
 

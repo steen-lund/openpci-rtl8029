@@ -93,8 +93,7 @@ int main(void)
     }
 
     // Receive handshake response
-    /* On the heap: not on the stack (too big for it), and not static either - builds with
-     * this buffer in the BSS hunk were rejected by LoadSeg ("bad loadfile hunk"). */
+    /* On the heap: too big for the stack */
     char *buffer = malloc(BUFFER_SIZE);
     if (!buffer) {
         printf("Out of memory\n");
