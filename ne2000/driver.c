@@ -239,7 +239,6 @@ struct UnitData
     UBYTE ud_UseMMUCacheInhibit;  /* TRUE if using MMU lib for cache-inhibit */
 #ifdef PDEBUG
     BPTR debug;
-    BPTR tdebug;
 #endif
 };
 
@@ -1718,15 +1717,6 @@ void GetHwAddress(struct UnitData *ud)
     for (i = 0; i < 6; i++)
         INIT_DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
 
-    /* Debug function verification with known test values */
-    INIT_DBG_U("Debug verification - testing output formats:");
-    INIT_DBG1_U("  UBYTE test: 0x%02lx (expected: 0xAB)", (ULONG)0xAB);
-    INIT_DBG1_U("  UWORD test: 0x%04lx (expected: 0x1234)", (ULONG)0x1234);
-    INIT_DBG1_U("  ULONG test: 0x%08lx (expected: 0xDEADBEEF)", (ULONG)0xDEADBEEF);
-    INIT_DBG1_U("  Decimal test: %ld (expected: 1518)", (LONG)1518);
-    INIT_DBG1_U("  Test packet size: %ld bytes", (LONG)1518);
-    INIT_DBG1_U("  Calculated pages: %ld (expected: 6 pages)", (LONG)((1518 + 4 + 255) >> 8));
-
     return;
 }
 
@@ -1994,17 +1984,7 @@ void ServiceCard(struct UnitData *ud)
 void MainLoop(struct UnitData *ud, struct MsgPort *port)
 {
     USE_U(SysBase)
-    USE_UD(DOSBase)
     ULONG signals, sigmask;
-
-#ifdef PDEBUG
-    UBYTE wname[60], *ptr;
-
-    ptr = StrCopy(wname, "CON:400/17/400/300/");
-    ptr = StrCopy(ptr, ud->ud_Name);
-    StrCopy(ptr, "/AUTO/CLOSE/WAIT");
-    ud->tdebug = Open(wname, MODE_NEWFILE);
-#endif
 
     sigmask = 1 << port->mp_SigBit;
     for (;;)
