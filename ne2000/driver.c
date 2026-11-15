@@ -1394,6 +1394,7 @@ void GoOffline(struct UnitData *ud)
     hw->regs[NE2000_RX_CONFIG] = 0x20;
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     hw->regs[NE2000_INT_MASK] = 0;
+    hw_write_barrier(hw, ud);
     RemoveInterrupt(ud);
     return;
 }
@@ -1526,6 +1527,7 @@ LONG PacketReceived(struct UnitData *ud)
     GetPacket(ud->ud_Hardware, ud->ud_NextPage, len, (UWORD *)ud->ud_RxBuffer, FALSE, ud);
     ud->ud_NextPage = next_page;
     ud->ud_Hardware->regs[NE2000_BOUNDARY] = ud->ud_NextPage == RX_BUFFER ? BUFFER_END - 1 : ud->ud_NextPage - 1;
+    hw_write_barrier(ud->ud_Hardware, ud);
     return len;
 }
 
@@ -1543,6 +1545,7 @@ void BufferOverflow(struct UnitData *ud)
 
     txp = hw->regs[NE2000_COMMAND] & COMMAND_TXP;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
+    hw_write_barrier(hw, ud);
 
     /* The chip needs up to 1.6 ms to finish a transfer in progress. Called from the unit */
     /* task only (never from the interrupt server), so Delay() is allowed here.            */
@@ -1570,6 +1573,7 @@ void BufferOverflow(struct UnitData *ud)
         hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START |
                                    COMMAND_ABORT | COMMAND_TXP;
     hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
+    hw_write_barrier(hw, ud);
 
     return;
 }
@@ -1751,10 +1755,15 @@ LONG RingBufferNotEmpty(struct UnitData *ud)
     UBYTE current;
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
+    /* Page 1 may only be selected with the card's interrupts masked, see IntCode().        */
+    /* Register 7 is INT_STATUS on page 0 and CURRENT on page 1: without barriers the read  */
+    /* could be answered from the data cache with the wrong one (no-ops with mmu.library).  */
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
-    /* Page 1 may only be selected with the card's interrupts masked, see IntCode(). */
+    hw_write_barrier(hw, ud);
+    hw_read_barrier(hw, ud);
     current = hw->regs[NE2000_CURRENT_PAGE];
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
+    hw_write_barrier(hw, ud);
     DIAG(DG_LASTCURRENT) = current;
 
     if (ud->ud_NextPage == current)
