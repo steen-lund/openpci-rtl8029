@@ -19,9 +19,6 @@
 
 #define MAX_RECORDS 40
 
-/* libnix stack swap, see the makefile (-Wl,-u,___stkinit) */
-long __stack = 16384;
-
 static const char *const task_states[] = {
     "waiting", "handling requests", "servicing card", "reading ring",
     "sending packet", "overflow recovery"

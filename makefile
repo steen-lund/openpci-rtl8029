@@ -28,11 +28,9 @@ LDFLAGS = -nostdlib -msmall-code -fomit-frame-pointer
 LIBS    = -ldebug
 STRIPFLAGS = 
 
-# Amiga-side tools (client, s2stat) are linked against libnix. libnix only honours the
-# __stack variable in the sources if swapstack.o is linked in; nothing references it, so
-# force it with -u.
+# Amiga-side tools (client, s2stat) are linked against libnix
 TOOL_CFLAGS  = $(CFLAGS) -noixemul
-TOOL_LDFLAGS = -noixemul -Wl,-u,___stkinit
+TOOL_LDFLAGS = -noixemul
 
 # Add your source files here, do not include "ne2000/" folder name this script will automatically include that
 SRCS = driver.c __divsi3.c __udivsi3.c header.s

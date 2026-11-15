@@ -24,10 +24,6 @@ static const size_t tx_test_sizes[] = {
 #define MESSAGE "Hello, Server!"
 #define EXPECTED_RESPONSE "Hello, Client!"
 
-/* libnix stack swap: the shell default of 4 KB is not enough. Only honoured because the
- * makefile links swapstack.o in with -Wl,-u,___stkinit. */
-long __stack = 32768;
-
 struct RDArgs *rdargs;
 struct Library *SocketBase;
 
