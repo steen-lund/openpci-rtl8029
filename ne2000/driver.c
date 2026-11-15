@@ -1578,7 +1578,10 @@ void BufferOverflow(struct UnitData *ud)
 ///
 /// SendPacket()
 
-void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
+/* Uploads a packet to the card and starts transmitting it. Returns FALSE if the request */
+/* was rejected instead (it has been replied with an error then).                        */
+
+BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 {
     USE_U(SysBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
@@ -1586,6 +1589,15 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     UWORD *ethdata = (UWORD *)ethbuffer;
     ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
+
+    /* ethbuffer holds one frame: refuse anything longer than the MTU (plus the Ethernet    */
+    /* header for raw packets, which carry their own).                                      */
+
+    if (data_len > ((req->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1514 : 1500))
+    {
+        IoDone(ud, req, S2ERR_MTU_EXCEEDED, S2WERR_GENERIC_ERROR);
+        return FALSE;
+    }
 
     /* If not raw packets, fill in Dst, Src and Type fields of Ethernet frame. 'datapointer' is a vairable */
     /* holding address of data to copy from network stack. If packet is raw, datapointer points to start   */
@@ -1596,7 +1608,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
         struct EthFrame *ef = (struct EthFrame *)ethbuffer;
 
         CopyMem(req->ios2_DstAddr, ef->ef_DestAddr, 6);
-        CopyMem(ud->ud_EtherAddress, ef->ef_SrcAddr, 6);
+        CopyMem(ud->ud_SoftAddress, ef->ef_SrcAddr, 6);  /* the configured address, as the card filters on */
         ef->ef_Type = req->ios2_PacketType;
         datapointer = ef->ef_Data;
     }
@@ -1605,7 +1617,11 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     /* Copy data from network stack using supplied CopyFrom() function. */
 
-    ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom(datapointer, req->ios2_Data, data_len);
+    if (!((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom(datapointer, req->ios2_Data, data_len))
+    {
+        IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_BUFF_ERROR);
+        return FALSE;
+    }
 
     /* Now we need length of data to send to hardware. IORequest ios2_DataLength does not include header   */
     /* length if packet is not RAW. So we sholud add it.                                                   */
@@ -1678,7 +1694,7 @@ void SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* then we will be able to reply IORequest in the interrupt server.                                    */
 
     /* DBG_T("Packet sent."); */
-    return;
+    return TRUE;
 }
 
 ///
@@ -1822,25 +1838,26 @@ void FlushQueues(struct UnitData *ud)
 ///
 /// StartNextWrite()
 
-/* Starts transmission of the next queued packet unless one is still in flight.            */
-/* ud_PendingWrite is only touched by the unit task: set here, cleared in ServiceCard().   */
+/* Starts transmission of the next queued packet unless one is still in flight. Requests   */
+/* SendPacket() rejects are skipped. ud_PendingWrite is only touched by the unit task: set  */
+/* here, cleared in ServiceCard().                                                          */
 
 void StartNextWrite(struct UnitData *ud)
 {
     USE_U(SysBase)
     struct IOSana2Req *req;
 
-    if (ud->ud_PendingWrite)
-        return;
-
-    ObtainSemaphore(&ud->ud_TxSem);
-    req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
-    ReleaseSemaphore(&ud->ud_TxSem);
-
-    if (req)
+    while (!ud->ud_PendingWrite)
     {
-        ud->ud_PendingWrite = req;
-        SendPacket(ud, req);
+        ObtainSemaphore(&ud->ud_TxSem);
+        req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
+        ReleaseSemaphore(&ud->ud_TxSem);
+
+        if (!req)
+            break;
+
+        if (SendPacket(ud, req))
+            ud->ud_PendingWrite = req;
     }
 }
 
