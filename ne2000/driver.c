@@ -216,7 +216,6 @@ struct UnitData
     struct Interrupt *ud_Interrupt;
     struct Task *ud_Task;
     struct MsgPort *ud_TaskPort;
-    struct MsgPort *ud_LifeTime;
     struct MinList ud_RxQueue;
     struct SignalSemaphore ud_RxSem;
     struct MinList ud_TxQueue;
@@ -773,54 +772,83 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
 
     DBG("RunTask() called.");
 
-    if ((ud->ud_LifeTime = CreateMsgPort()))
+    if ((ud->ud_Task = (struct Task *)CreateNewProcTags(
+            NP_Entry, (LONG)UnitTask,
+            NP_Name, (LONG)ud->ud_Name,
+            NP_Priority, 6,
+            NP_StackSize, 16384, /* SendPacket() keeps a full frame on the stack */
+            TAG_END)))
     {
-        if ((ud->ud_Task = (struct Task *)CreateNewProcTags(
-                NP_Entry, (LONG)UnitTask,
-                NP_Name, (LONG)ud->ud_Name,
-                NP_Priority, 6,
-                NP_StackSize, 16384, /* SendPacket() keeps a full frame on the stack */
-                TAG_END)))
-        {
-            WORD i;
+        WORD i;
 
-            DBG1("Task [$%08lx] started.", ud->ud_Task);
-            for (i = 0; i < 50; i++)
+        DBG1("Task [$%08lx] started.", ud->ud_Task);
+        for (i = 0; i < 50; i++)
+        {
+            if (!(ud->ud_TaskPort = FindPort(ud->ud_Name)))
+                Delay(1);
+            else
             {
-                if (!(ud->ud_TaskPort = FindPort(ud->ud_Name)))
-                    Delay(1);
-                else
-                {
-                    DBG("Task port detected.");
-                    ud->ud_Message.mn_Node.ln_Type = NT_MESSAGE;
-                    ud->ud_Message.mn_Length = sizeof(struct UnitData);
-                    ud->ud_Message.mn_ReplyPort = ud->ud_LifeTime;
-                    PutMsg(ud->ud_TaskPort, &ud->ud_Message);
-                    return TRUE;
-                }
+                /* Hand the unit to its task. The task keeps this message until it exits */
+                /* and replies it then; KillTask() supplies the reply port.              */
+                DBG("Task port detected.");
+                ud->ud_Message.mn_Node.ln_Type = NT_MESSAGE;
+                ud->ud_Message.mn_Length = sizeof(struct UnitData);
+                ud->ud_Message.mn_ReplyPort = NULL;
+                PutMsg(ud->ud_TaskPort, &ud->ud_Message);
+                return TRUE;
             }
         }
-
-        /* No task, or one that never opened its port: it holds no reference to the unit, */
-        /* so forget it rather than have ExpungeUnit() signal it and wait for it forever.  */
-        ud->ud_Task = NULL;
-        DeleteMsgPort(ud->ud_LifeTime);
-        ud->ud_LifeTime = NULL;
     }
+
+    /* No task, or one that never opened its port: it holds no reference to the unit, so */
+    /* forget it rather than have ExpungeUnit() signal it and wait for it forever.        */
+    ud->ud_Task = NULL;
     return FALSE;
 }
 
 ///
 /// KillTask(struct DevData *dd, struct UnitData *ud)
 
+/* Tells the unit task to quit and waits until it has. The task replies the unit message   */
+/* as its last action. The reply port is created here, by the task that is closing the     */
+/* unit: a message port only wakes the task that created it, and the unit is not           */
+/* necessarily closed by the task that opened it (waiting on a port made at open time left */
+/* the closing task asleep forever, and signalled the opener, which may be long gone).     */
+
 void KillTask(struct DevData *dd, struct UnitData *ud)
 {
     USE(SysBase)
+    USE(DOSBase)
+    struct MsgPort *port;
 
+    port = CreateMsgPort();
+
+    /* If the task could not set itself up it has replied (without a port) and gone already. */
+    /* Otherwise it only looks at the reply port when it replies, after it got the signal.   */
+    Forbid();
+    if (ud->ud_Message.mn_Node.ln_Type == NT_FREEMSG)
+    {
+        Permit();
+        if (port)
+            DeleteMsgPort(port);
+        return;
+    }
+    ud->ud_Message.mn_ReplyPort = port;
     Signal(ud->ud_Task, SIGBREAKF_CTRL_C);
-    WaitPort(ud->ud_LifeTime);
-    GetMsg(ud->ud_LifeTime);
-    DeleteMsgPort(ud->ud_LifeTime);
+    Permit();
+
+    if (port)
+    {
+        WaitPort(port);
+        GetMsg(port);
+        DeleteMsgPort(port);
+    }
+    else
+    {
+        /* No port to be had: a reply without one just marks the message as free */
+        while (ud->ud_Message.mn_Node.ln_Type != NT_FREEMSG)
+            Delay(1);
+    }
     DBG("Task dead.");
     return;
 }

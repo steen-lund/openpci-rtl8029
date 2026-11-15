@@ -42,6 +42,7 @@ Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `bin/openpc
 
 Diagnosing on the real machine:
 
+- The Amiga runs Roadshow with the interface named `RTL8029`. `NetShutdown` stops the network and closes the device (exercising the unit-expunge path); `AddNetInterface RTL8029` brings it back.
 - `s2stat` on the Amiga prints the driver's counters and unit-task state (`S2_GETSPECIALSTATS`, answered in the caller's context so it works even if the unit task hangs). Run it twice a few seconds apart and compare.
 - The Amiga can be pinged from the development Mac; a size sweep (`ping -s <n> <amiga-ip>`, frame = n + 42) is a quick deterministic check of frame-size handling. The client/server test did not catch a bug that dropped every frame of 1511+ bytes; the sweep did.
 - `sudo tcpdump -i en0 -w file.pcap host <amiga-ip>` on the Mac shows which frames the Amiga fails to acknowledge.
@@ -66,7 +67,7 @@ Rules that follow from this (each has been broken before and caused stalls):
 - `IntCode()` must stay minimal: no `Delay()`, no semaphores, no debug output, no packet work.
 - The request queues are shared between the unit task and callers (`DevAbortIO()`) and are protected by `ud_RxSem`/`ud_TxSem`. `ud_PendingWrite` is touched by the unit task only.
 - Register page 1 may only be selected while the card's interrupts are masked (`INT_MASK` = 0): the interrupt chain is shared, so `IntCode()` can run at any time and treats "page 1 selected" as "not our interrupt".
-- State changes run in the unit task too. Going offline (`TakeOffline()`) returns the transmit in flight and all queued requests with `S2ERR_OUTOFSERVICE`; writes arriving while offline are refused the same way, reads are queued. `S2_ONLINE` requires a prior `S2_CONFIGINTERFACE`. When the unit is expunged the task takes the card offline and replies to everything before exiting.
+- State changes run in the unit task too. Going offline (`TakeOffline()`) returns the transmit in flight and all queued requests with `S2ERR_OUTOFSERVICE`; writes arriving while offline are refused the same way, reads are queued. `S2_ONLINE` requires a prior `S2_CONFIGINTERFACE`. When the unit is expunged the task takes the card offline and replies to everything before exiting. The closing task waits for that on a reply port it creates itself (`KillTask()`): a unit is not necessarily closed by the task that opened it (Roadshow's `NetShutdown` is not), and a message port only wakes its creator.
 - TX upload and RX download share the card's single remote-DMA channel; they are serialized by both running in the unit task.
 - No per-packet debug output: serial `KPrintF` takes longer than a packet.
 
