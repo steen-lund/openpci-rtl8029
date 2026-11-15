@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
 
         size_t expected_size = ntohl(net_size);
 
-        printf("DEBUG: Read length prefix: 0x%08X -> %zu bytes\n", net_size, expected_size);
+        printf("DEBUG: Read length prefix: 0x%08lX -> %zu bytes\n", (unsigned long)net_size, expected_size);
 
         if (expected_size > BUFFER_SIZE - 1) {
             printf("Packet too large: %zu bytes\n", expected_size);

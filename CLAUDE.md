@@ -23,6 +23,7 @@ cd macOS/src && make -f Makefile.server   # host-side test server -> macOS/src/s
 ```
 
 - The build uses `-Wall -Werror`; any warning fails it.
+- `include/` holds third-party headers the toolchain does not ship: the openpci.library SDK (Aminet `driver/other/openpci68k.lha`), mmu.library (MuManual from NDK 3.2) and `devices/sana2.h` (NDK 3.2). `include/proto/*.h` and `include/inline/*.h` are generated — do not hand-edit; regenerate from `include/fd/*.fd` with `fd2sfd <fd> <clib protos> -o x.sfd` then `sfdc --target=m68k-amigaos --mode=macros|proto`.
 - Driver sources live in `ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
 
 ## Testing
@@ -51,7 +52,6 @@ Hardware details that matter when touching the RX/TX paths:
 - Card memory layout is in 256-byte pages: TX buffer at page `0x40`, RX ring from `0x46` (`RX_BUFFER`) to `0x80` (`BUFFER_END`). `ud_NextPage` is the software read pointer; the `BOUNDARY` register is kept one page behind it.
 - Registers are byte-wide (`ud_Hardware->regs[]`); packet data moves through the 16-bit `DMAPort`. The card is little-endian and the CPU big-endian, so byte order of each word read from `DMAPort` is significant — `GetPacketHeader()` documents the layout, and this has been wrong and reverted more than once in git history. `ud_RxBuffer` is indexed in 16-bit words (e.g. `[6]` is the EtherType, offset 7 skips the 14-byte header).
 - Cache coherency for the memory-mapped registers: if `mmu.library` is available the region is marked cache-inhibited (`setup_cache_inhibited_hw()`); otherwise `hw_read_barrier()`/`hw_write_barrier()` fall back to `CacheClearE()`. Barrier placement has been reworked several times trading correctness against per-packet cost.
-- `proto/mmu.h` in the installed NDK is malformed; `driver.c` includes the clib/inline headers directly instead. Don't "fix" this back to `proto/mmu.h`.
 
 Conventions:
 

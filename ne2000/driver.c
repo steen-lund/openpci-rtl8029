@@ -30,17 +30,8 @@
 // #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
 
 /* mmu.library for cache-inhibited hardware mapping */
-/* Note: proto/mmu.h in the installed NDK is malformed, so we replicate */
-/* what a correct proto/mmu.h should do for GCC with inline stubs */
-#ifndef __NOLIBBASE__
-extern struct Library *MMUBase;
-#endif
-#include <clib/mmu_protos.h>
-#if defined(__GNUC__)
-#include <inline/mmu.h>
-#else
-#include <pragmas/mmu_pragmas.h>
-#endif
+struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
+#include <proto/mmu.h>
 #include <mmu/context.h>
 
 #define OK 0
@@ -76,7 +67,6 @@ extern struct Library *MMUBase;
 // Macros for debug messages.
 
 #if PDEBUG
-#include <proto/debug.h>
 
 #define USE_D(a) struct Library* a = dd->dd_##a;
 #define USE_UD(a) struct Library* a = ud->ud_##a;
@@ -287,7 +277,7 @@ UWORD NSDSupported[] =
 ///
 
 /* Good enough */
-unsigned char *strcpy(unsigned char *dest, const unsigned char *src)
+unsigned char *StrCopy(unsigned char *dest, const unsigned char *src)
 {
     unsigned char *d = dest;
     while (*src)
@@ -367,7 +357,7 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
     struct DevData *dd;
     struct Library *SysBase = sysb;
 
-    if (dd = (struct DevData *)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0))
+    if ((dd = (struct DevData *)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0)))
     {
         dd->dd_Lib.lib_Node.ln_Type = NT_DEVICE;
         dd->dd_Lib.lib_Node.ln_Name = romtag.rt_Name;
@@ -387,7 +377,7 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
 
 #ifdef PDEBUG
 /*USE_D(DOSBase)*/
-/*strcpy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
+/*StrCopy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
 /*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
 /*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
 #endif
@@ -725,13 +715,13 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
 
     DBG("RunTask() called.");
 
-    if (ud->ud_LifeTime = CreateMsgPort())
+    if ((ud->ud_LifeTime = CreateMsgPort()))
     {
-        if (ud->ud_Task = (struct Task *)CreateNewProcTags(
+        if ((ud->ud_Task = (struct Task *)CreateNewProcTags(
                 NP_Entry, (LONG)UnitTask,
                 NP_Name, (LONG)ud->ud_Name,
                 NP_Priority, 6,
-                TAG_END))
+                TAG_END)))
         {
             WORD i;
 
@@ -862,7 +852,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
             ud->ud_MMUBase = dd->dd_MMUBase;
-            strcpy(ud->ud_Name, "openpci-rtl8029.device (x)");
+            StrCopy(ud->ud_Name, "openpci-rtl8029.device (x)");
             ud->ud_Name[24] = '0' + unit;
             ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
@@ -1264,7 +1254,7 @@ volatile struct Ne2000 *FindHardware(struct DevData *dd, WORD unit, struct UnitD
         tags[1].ti_Data = PCI_DEVICE_RTL8029;
         tags[2].ti_Tag = TAG_END;
         tags[2].ti_Data = 0;
-        board = FindBoardTagList(board, (struct TagItem *)tags);
+        board = FindBoardA(board, (struct TagItem *)tags);
 
         if (!board)
             break;
@@ -1792,9 +1782,9 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 #ifdef PDEBUG
     UBYTE wname[60], *ptr;
 
-    ptr = strcpy(wname, "CON:400/17/400/300/");
-    ptr = strcpy(ptr, ud->ud_Name);
-    strcpy(ptr, "/AUTO/CLOSE/WAIT");
+    ptr = StrCopy(wname, "CON:400/17/400/300/");
+    ptr = StrCopy(ptr, ud->ud_Name);
+    StrCopy(ptr, "/AUTO/CLOSE/WAIT");
     ud->tdebug = Open(wname, MODE_NEWFILE);
 #endif
 
@@ -1826,7 +1816,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
             struct IOSana2Req *req;
 
             /* DBG_T("port"); */
-            while (req = (struct IOSana2Req *)GetMsg(port))
+            while ((req = (struct IOSana2Req *)GetMsg(port)))
             {
                 switch (req->ios2_Req.io_Command)
                 {
@@ -1880,7 +1870,7 @@ void UnitTask(void)
     struct UnitData *ud;
 
     task = FindTask(NULL);
-    if (port = CreateMsgPort())
+    if ((port = CreateMsgPort()))
     {
         port->mp_Node.ln_Name = task->tc_Node.ln_Name;
         port->mp_Node.ln_Pri = 20;
