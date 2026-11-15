@@ -350,13 +350,20 @@ done:
     }
 
     // Verify the data
-    struct {
+    struct __attribute__((packed)) {
         uint32_t magic;
         uint16_t version;
         uint32_t counter;
         float value;
         uint64_t timestamp;
     } *test_data = (void*)binary_buffer;
+
+    printf("  Received %zu bytes, expected struct size: %zu\n", total_read, sizeof(*test_data));
+    printf("  Raw bytes: ");
+    for (size_t i = 0; i < total_read && i < 32; i++) {
+        printf("%02X ", (unsigned char)binary_buffer[i]);
+    }
+    printf("\n");
 
     uint32_t magic = ntohl(test_data->magic);
     uint16_t version = ntohs(test_data->version);
@@ -368,9 +375,16 @@ done:
     float_conv.i = ntohl(float_conv.i);
     float value = float_conv.f;
 
-    // 64-bit conversion
-    uint64_t timestamp = ((uint64_t)ntohl((uint32_t)(test_data->timestamp >> 32)) << 32) |
-                         ntohl((uint32_t)(test_data->timestamp & 0xFFFFFFFF));
+    // 64-bit conversion - read as two 32-bit values in network byte order
+    // The bytes are: 01 23 45 67 89 AB CD EF (high word first, then low word)
+    // Struct layout: magic(4) + version(2) + counter(4) + value(4) + timestamp(8) = 22 bytes
+    // Timestamp starts at offset 14
+    uint32_t ts_high, ts_low;
+    memcpy(&ts_high, &binary_buffer[14], 4);  // Offset 14 is where timestamp starts
+    memcpy(&ts_low, &binary_buffer[18], 4);   // Next 4 bytes
+    ts_high = ntohl(ts_high);
+    ts_low = ntohl(ts_low);
+    uint64_t timestamp = ((uint64_t)ts_high << 32) | ts_low;
 
     int endian_errors = 0;
     printf("  Verifying received data:\n");
@@ -404,7 +418,56 @@ done:
     }
     write(client_socket_fd, response, strlen(response));
 
-    printf("\nEndianness test: %s\n", endian_errors == 0 ? "PASSED" : "FAILED");
+    printf("\nEndianness test (Client→Server): %s\n", endian_errors == 0 ? "PASSED" : "FAILED");
+
+    // Now send endianness test data back to client
+    printf("\nSending endianness test data to client...\n");
+
+    struct __attribute__((packed)) {
+        uint32_t magic;      // 0xCAFEBABE
+        uint16_t version;    // 0x5678
+        uint32_t counter;    // 87654321
+        float value;         // 2.71828
+        uint64_t timestamp;  // 0xFEDCBA9876543210
+    } server_test_data;
+
+    server_test_data.magic = htonl(0xCAFEBABE);
+    server_test_data.version = htons(0x5678);
+    server_test_data.counter = htonl(87654321);
+
+    // Float requires special handling
+    union { float f; uint32_t i; } srv_float_conv;
+    srv_float_conv.f = 2.71828f;
+    srv_float_conv.i = htonl(srv_float_conv.i);
+    server_test_data.value = srv_float_conv.f;
+
+    // 64-bit value - write high word first in memory, then low word
+    // On little-endian x86, we need to swap the order
+    server_test_data.timestamp = ((uint64_t)htonl(0x76543210) << 32) | htonl(0xFEDCBA98);
+
+    printf("  Size of test_data: %zu bytes\n", sizeof(server_test_data));
+
+    // Send length prefix
+    net_size = htonl((uint32_t)sizeof(server_test_data));
+    bytes_written = write(client_socket_fd, &net_size, sizeof(net_size));
+    if (bytes_written < 0) {
+        perror("send endian test length");
+    } else {
+        // Send data
+        bytes_written = write(client_socket_fd, &server_test_data, sizeof(server_test_data));
+        if (bytes_written < 0) {
+            perror("send endian test data");
+        } else {
+            printf("  Sent %zd bytes of binary data\n", bytes_written);
+
+            // Wait for verification response
+            bytes_read = read(client_socket_fd, buffer, BUFFER_SIZE - 1);
+            if (bytes_read > 0) {
+                buffer[bytes_read] = '\0';
+                printf("  Client response: %s\n", buffer);
+            }
+        }
+    }
 
 cleanup:
     close(client_socket_fd);

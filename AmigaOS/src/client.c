@@ -320,13 +320,15 @@ tx_done:
     // Endianness test - send structured binary data
     printf("\nEndianness test: Sending binary data...\n");
 
-    struct {
+    struct __attribute__((packed)) {
         uint32_t magic;      // 0xDEADBEEF
         uint16_t version;    // 0x1234
         uint32_t counter;    // 12345678
         float value;         // 3.14159
         uint64_t timestamp;  // 0x0123456789ABCDEF
     } test_data;
+
+    printf("  Size of test_data: %zu bytes\n", sizeof(test_data));
 
     test_data.magic = htonl(0xDEADBEEF);
     test_data.version = htons(0x1234);
@@ -363,6 +365,114 @@ tx_done:
         }
     }
 
+    // Receive endianness test data from server
+    printf("\nEndianness test (Server→Client): Receiving binary data...\n");
+
+    // Read length prefix
+    uint32_t srv_net_size;
+    size_t srv_total_read = 0;
+    while (srv_total_read < sizeof(srv_net_size)) {
+        bytes_read = recv(socket_fd, ((char*)&srv_net_size) + srv_total_read,
+                        sizeof(srv_net_size) - srv_total_read, 0);
+        if (bytes_read <= 0) {
+            printf("Failed to read server endian test length\n");
+            goto final_cleanup;
+        }
+        srv_total_read += bytes_read;
+    }
+
+    size_t srv_expected_size = ntohl(srv_net_size);
+    printf("  Expecting %zu bytes of binary data\n", srv_expected_size);
+
+    // Read data
+    char srv_binary_buffer[256];
+    srv_total_read = 0;
+    while (srv_total_read < srv_expected_size) {
+        bytes_read = recv(socket_fd, srv_binary_buffer + srv_total_read,
+                        srv_expected_size - srv_total_read, 0);
+        if (bytes_read <= 0) {
+            printf("Failed to read server endian test data\n");
+            goto final_cleanup;
+        }
+        srv_total_read += bytes_read;
+    }
+
+    printf("  Received %zu bytes\n", srv_total_read);
+    printf("  Raw bytes: ");
+    for (size_t i = 0; i < srv_total_read && i < 32; i++) {
+        printf("%02X ", (unsigned char)srv_binary_buffer[i]);
+    }
+    printf("\n");
+
+    // Verify the data
+    struct __attribute__((packed)) {
+        uint32_t magic;
+        uint16_t version;
+        uint32_t counter;
+        float value;
+        uint64_t timestamp;
+    } *srv_test_data = (void*)srv_binary_buffer;
+
+    uint32_t srv_magic = ntohl(srv_test_data->magic);
+    uint16_t srv_version = ntohs(srv_test_data->version);
+    uint32_t srv_counter = ntohl(srv_test_data->counter);
+
+    // Float conversion
+    union { float f; uint32_t i; } srv_float_conv;
+    srv_float_conv.f = srv_test_data->value;
+    srv_float_conv.i = ntohl(srv_float_conv.i);
+    float srv_value = srv_float_conv.f;
+
+    // 64-bit conversion - read as two 32-bit values
+    uint32_t srv_ts_high, srv_ts_low;
+    memcpy(&srv_ts_high, &srv_binary_buffer[14], 4);
+    memcpy(&srv_ts_low, &srv_binary_buffer[18], 4);
+    srv_ts_high = ntohl(srv_ts_high);
+    srv_ts_low = ntohl(srv_ts_low);
+    uint64_t srv_timestamp = ((uint64_t)srv_ts_high << 32) | srv_ts_low;
+
+    int srv_endian_errors = 0;
+    printf("  Verifying received data:\n");
+    printf("    magic:     0x%08lX (expected 0xCAFEBABE) %s\n", (unsigned long)srv_magic,
+           srv_magic == 0xCAFEBABE ? "OK" : "ERROR");
+    if (srv_magic != 0xCAFEBABE) srv_endian_errors++;
+
+    printf("    version:   0x%04X (expected 0x5678) %s\n", srv_version,
+           srv_version == 0x5678 ? "OK" : "ERROR");
+    if (srv_version != 0x5678) srv_endian_errors++;
+
+    printf("    counter:   %lu (expected 87654321) %s\n", (unsigned long)srv_counter,
+           srv_counter == 87654321 ? "OK" : "ERROR");
+    if (srv_counter != 87654321) srv_endian_errors++;
+
+    printf("    value:     %.5f (expected 2.71828) %s\n", srv_value,
+           (srv_value > 2.71827 && srv_value < 2.71829) ? "OK" : "ERROR");
+    if (!(srv_value > 2.71827 && srv_value < 2.71829)) srv_endian_errors++;
+
+    printf("    timestamp: 0x%08lX%08lX (expected 0xFEDCBA9876543210) %s\n",
+           (unsigned long)(srv_timestamp >> 32), (unsigned long)(srv_timestamp & 0xFFFFFFFF),
+           srv_timestamp == 0xFEDCBA9876543210ULL ? "OK" : "ERROR");
+    if (srv_timestamp != 0xFEDCBA9876543210ULL) srv_endian_errors++;
+
+    // Send response
+    char srv_response[128];
+    if (srv_endian_errors == 0) {
+        snprintf(srv_response, sizeof(srv_response), "ENDIAN-OK: All values correct!");
+    } else {
+        snprintf(srv_response, sizeof(srv_response), "ENDIAN-ERROR: %d values incorrect", srv_endian_errors);
+    }
+    bytes_written = send(socket_fd, srv_response, strlen(srv_response), 0);
+    if (bytes_written < 0) {
+        PrintFault(IoErr(), "send endian response");
+    }
+
+    printf("\nEndianness test (Server→Client): %s\n", srv_endian_errors == 0 ? "PASSED" : "FAILED");
+
+    if (srv_endian_errors > 0) {
+        tx_errors++;  // Count as TX error since it affects overall result
+    }
+
+final_cleanup:
     printf("\n");
     printf("Overall: RX=%d errors, TX=%d errors\n", errors, tx_errors);
 
