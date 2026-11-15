@@ -41,6 +41,12 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define BUFFER_END  0x80
 #define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR | INT_OVERFLOW)
 
+/* The RTL8029 accepts 32-bit accesses to its data port, which halves the number of bus    */
+/* cycles per packet (the bus cycles are what packet transfer time consists of). Set to 0  */
+/* to move packet data 16 bits at a time as the original driver did.                       */
+#define USE_LONG_DMA 1
+#define DMAPORT_LONG(ne) ((ne)->DMAPortLong)
+
 /* Cache control flags for hardware I/O */
 #define CACRF_ClearD    (1UL<<11)  /* Clear data cache */
 
@@ -1576,15 +1582,20 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
     /* Minimal barrier: ensure DMA command reaches hardware */
     hw_write_barrier(ne, ud);
 
-    for (count = (len + 1) >> 1; count; count--)
+#if USE_LONG_DMA
     {
-        *buffer = ne->DMAPort;
-        if (print)
-            DBG1_W_NONEWLINE("%04x", *buffer);
-        ++buffer;
+        ULONG *lbuffer = (ULONG *)buffer;
+        UWORD longs;
+
+        for (longs = count >> 2; longs; longs--)
+            *lbuffer++ = DMAPORT_LONG(ne);
+        if (count & 2)
+            *(UWORD *)lbuffer = ne->DMAPort;
     }
-    if (print)
-        DBG("");
+#else
+    for (count >>= 1; count; count--)
+        *buffer++ = ne->DMAPort;
+#endif
     return;
 }
 
@@ -1689,7 +1700,6 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     USE_U(SysBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     UBYTE ethbuffer[1536], *datapointer;
-    UWORD *ethdata = (UWORD *)ethbuffer;
     ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
     USE_U(TimerBase)
@@ -1768,8 +1778,23 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
 
     /* Now we can send packet data to DMAPort word by word.                                                */
 
-    for (cycles = (data_len + 1) >> 1; cycles; cycles--)
-        hw->DMAPort = *ethdata++;
+#if USE_LONG_DMA
+    {
+        ULONG *ldata = (ULONG *)ethbuffer;
+
+        for (cycles = dma_len >> 2; cycles; cycles--)
+            DMAPORT_LONG(hw) = *ldata++;
+        if (dma_len & 2)
+            hw->DMAPort = *(UWORD *)ldata;
+    }
+#else
+    {
+        UWORD *ethdata = (UWORD *)ethbuffer;
+
+        for (cycles = dma_len >> 1; cycles; cycles--)
+            hw->DMAPort = *ethdata++;
+    }
+#endif
 
     /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
 

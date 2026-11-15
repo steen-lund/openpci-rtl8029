@@ -26,7 +26,8 @@ endif
 
 INCLUDES = -I. -I./include -I/opt/amiga/m68k-amigaos/ndk-include -I/opt/amiga/m68k-amigaos/include
 WARNINGS = -Wall -Wwrite-strings -Werror
-CFLAGS  = -msmall-code $(OPTIMIZE) $(DEBUG) $(INCLUDES) $(DEFINES) $(WARNINGS)
+# -fno-strict-aliasing: the driver moves packet data through buffers as bytes, words and longs
+CFLAGS  = -msmall-code -fno-strict-aliasing $(OPTIMIZE) $(DEBUG) $(INCLUDES) $(DEFINES) $(WARNINGS)
 LDFLAGS = -nostdlib -msmall-code -fomit-frame-pointer
 LIBS    = -ldebug
 STRIPFLAGS = 

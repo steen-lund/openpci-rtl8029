@@ -78,8 +78,11 @@
 struct Ne2000
  {
   UBYTE regs[16];
-  UWORD DMAPort;
-  UWORD pad0;
+  union                 /* data port: 16-bit, or 32-bit on cards that allow it */
+   {
+    UWORD DMAPort;
+    ULONG DMAPortLong;
+   };
   UWORD pad1;
   UWORD pad2;
   UWORD ResetPort;
