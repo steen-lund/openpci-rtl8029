@@ -10,12 +10,17 @@
 #include <ifaddrs.h>
 #include <signal.h>
 #include <sys/select.h>
+#include <sys/time.h>
 
 #define PORT 10203
 #define BUFFER_SIZE 8192
 #define EXPECTED_MESSAGE "Hello, Server!"
 #define RESPONSE "Hello, Client!"
 #define UDP_DONE "UDP-DONE"
+// Optional throughput benchmark, requested by the client instead of UDP_DONE
+#define UDP_BENCH "UDP-BENCH"
+#define BENCH_DONE "BENCH-DONE"
+#define BENCH_BYTES (4UL * 1024 * 1024)   // per direction; must match the client
 #define UDP_HEADERS 42  // Ethernet + IP + UDP headers around one datagram
 
 // Test packet sizes to exercise different buffer scenarios
@@ -39,6 +44,50 @@ void handle_sigint(int sig __attribute__((unused))) {
     }
     printf("Server shutting down...\n");
     exit(0);
+}
+
+static double seconds_now(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec + tv.tv_usec / 1e6;
+}
+
+// Throughput benchmark: send BENCH_BYTES to the client, then receive the same amount
+static void run_benchmark(int fd) {
+    static char chunk[65536];
+    size_t total;
+    double t0;
+
+    printf("\nThroughput benchmark (%lu KB each way)...\n", BENCH_BYTES / 1024);
+    for (size_t i = 0; i < sizeof(chunk); i++) {
+        chunk[i] = (char)(i * 31 + (i >> 8));
+    }
+
+    t0 = seconds_now();
+    for (total = 0; total < BENCH_BYTES; ) {
+        size_t want = BENCH_BYTES - total < sizeof(chunk) ? BENCH_BYTES - total : sizeof(chunk);
+        ssize_t sent = write(fd, chunk, want);
+        if (sent <= 0) {
+            perror("benchmark write");
+            return;
+        }
+        total += sent;
+    }
+    printf("  Sent to client in %.1f s (rate as seen by the sender, the client's figure is the real one)\n",
+           seconds_now() - t0);
+
+    t0 = seconds_now();
+    for (total = 0; total < BENCH_BYTES; ) {
+        ssize_t got = read(fd, chunk, sizeof(chunk));
+        if (got <= 0) {
+            printf("  Receive from client failed after %zu bytes\n", total);
+            return;
+        }
+        total += got;
+    }
+    printf("  Received from client: %.0f KB/s (%.1f s)\n",
+           (BENCH_BYTES / 1024.0) / (seconds_now() - t0), seconds_now() - t0);
+    write(fd, BENCH_DONE, strlen(BENCH_DONE));
 }
 
 void print_ip_address() {
@@ -510,6 +559,10 @@ done:
                 printf("Client closed connection.\n");
             } else {
                 printf("Frame size test finished.\n");
+                done[got] = '\0';
+                if (strncmp(done, UDP_BENCH, strlen(UDP_BENCH)) == 0) {
+                    run_benchmark(client_socket_fd);
+                }
             }
             break;
         }

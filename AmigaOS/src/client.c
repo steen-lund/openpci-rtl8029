@@ -36,6 +36,12 @@ static const size_t udp_test_sizes[] = {
 #define UDP_TIMEOUT_SECS 2
 #define UDP_DONE "UDP-DONE"
 
+// Optional throughput benchmark (BENCH switch): bulk TCP data in each direction with no
+// disk involved. The client asks for it instead of sending UDP_DONE.
+#define UDP_BENCH "UDP-BENCH"
+#define BENCH_DONE "BENCH-DONE"
+#define BENCH_BYTES (4UL * 1024 * 1024)   // per direction; must match the server
+
 #define MESSAGE "Hello, Server!"
 #define EXPECTED_RESPONSE "Hello, Client!"
 
@@ -49,13 +55,13 @@ int main(void)
     char *server_ip;
 
     // Define the template for ReadArgs
-    const char *template = "SERVERIP/A";
-    LONG args[1];
+    const char *template = "SERVERIP/A,BENCH/S";
+    LONG args[2] = { 0, 0 };
 
     // Initialize the RDArgs structure
     rdargs = ReadArgs(template, args, NULL);
     if (!rdargs) {
-        printf("Usage: client SERVERIP\n");
+        printf("Usage: client SERVERIP [BENCH]\n");
         return 1;
     }
 
@@ -571,8 +577,58 @@ tx_done:
     }
     printf("Frame size test: %s\n", udp_errors == 0 ? "PASSED" : "FAILED");
 
-    // Tell the server the UDP phase is over
-    send(socket_fd, (char *)UDP_DONE, strlen(UDP_DONE), 0);
+    if (!args[1]) {
+        // Tell the server the UDP phase is over
+        send(socket_fd, (char *)UDP_DONE, strlen(UDP_DONE), 0);
+    } else {
+        // Throughput benchmark: the server sends BENCH_BYTES, then we send the same amount
+        struct DateStamp t0, t1;
+        ULONG total, ticks;
+
+        printf("\nThroughput benchmark (%lu KB each way, no disk)...\n", BENCH_BYTES / 1024);
+        send(socket_fd, (char *)UDP_BENCH, strlen(UDP_BENCH), 0);
+
+        total = 0;
+        DateStamp(&t0);
+        while (total < BENCH_BYTES) {
+            LONG got = recv(socket_fd, buffer, BUFFER_SIZE, 0);
+            if (got <= 0) {
+                break;
+            }
+            total += got;
+        }
+        DateStamp(&t1);
+        ticks = (t1.ds_Minute - t0.ds_Minute) * 3000 + t1.ds_Tick - t0.ds_Tick;
+        if (total == BENCH_BYTES && ticks) {
+            printf("  Receive: %lu KB/s (%lu.%lu s)\n", (total / 1024) * 50 / ticks, ticks / 50, (ticks % 50) / 5);
+        } else {
+            printf("  Receive: FAILED after %lu bytes\n", total);
+            errors++;
+        }
+
+        if (total == BENCH_BYTES) {
+            total = 0;
+            DateStamp(&t0);
+            while (total < BENCH_BYTES) {
+                LONG sent = send(socket_fd, buffer, BUFFER_SIZE, 0);
+                if (sent <= 0) {
+                    break;
+                }
+                total += sent;
+            }
+            // Wait until the server has it all
+            if (total == BENCH_BYTES && recv(socket_fd, buffer, BUFFER_SIZE, 0) > 0) {
+                DateStamp(&t1);
+                ticks = (t1.ds_Minute - t0.ds_Minute) * 3000 + t1.ds_Tick - t0.ds_Tick;
+                if (ticks) {
+                    printf("  Send:    %lu KB/s (%lu.%lu s)\n", (total / 1024) * 50 / ticks, ticks / 50, (ticks % 50) / 5);
+                }
+            } else {
+                printf("  Send: FAILED after %lu bytes\n", total);
+                tx_errors++;
+            }
+        }
+    }
 
 final_cleanup:
     printf("\n");
