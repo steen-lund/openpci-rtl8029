@@ -19,6 +19,10 @@
 
 #define MAX_RECORDS 40
 
+/* Private OpenDevice() flag of openpci-rtl8029.device: query-only open, allowed even when
+ * the TCP/IP stack has the unit open exclusively. Must match the driver. */
+#define OPENF_MONITOR 0x80000000UL
+
 static const char *const task_states[] = {
     "waiting", "handling requests", "servicing card", "reading ring",
     "sending packet", "overflow recovery"
@@ -84,7 +88,7 @@ int main(int argc, char **argv)
         for (i = 0; i < 3 && !opened; i++)
         {
             req->ios2_BufferManagement = tags;
-            if (OpenDevice((STRPTR)names[i], unit, (struct IORequest *)req, 0) == 0)
+            if (OpenDevice((STRPTR)names[i], unit, (struct IORequest *)req, OPENF_MONITOR) == 0)
                 opened = 1;
         }
 

@@ -56,6 +56,11 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define UF_PROMISCUOUS  0x04
 #define UF_EXCLUSIVE    0x08    /* opened with SANA2OPF_MINE */
 
+/* Private OpenDevice() flag for diagnostic tools (s2stat): open the unit for queries only. */
+/* Such an open is allowed next to an exclusive opener, gets no buffer management and may   */
+/* not read or write packets, so it cannot take anything away from the exclusive opener.    */
+#define OPENF_MONITOR   0x80000000
+
 // Macro for registerized parameters (used in some OS functions).
 
 #define reg(a) __asm(#a)
@@ -480,6 +485,13 @@ LONG DevOpen(register struct IOSana2Req *req reg(a1), register LONG unit reg(d0)
             req->ios2_Req.io_Message.mn_Node.ln_Type = NT_REPLYMSG;
             req->ios2_Req.io_Device = (struct Device *)dd;
             req->ios2_Req.io_Unit = (struct Unit *)ud;
+            if (flags & OPENF_MONITOR)
+            {
+                /* Query-only open: no buffer management, see DevBeginIO() */
+                req->ios2_BufferManagement = NULL;
+                dd->dd_Lib.lib_Flags &= ~LIBF_DELEXP;
+                return 0;
+            }
             if (PrepareCookie(req, dd))
             {
                 dd->dd_Lib.lib_Flags &= ~LIBF_DELEXP;
@@ -584,6 +596,12 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
 
     case CMD_READ:
         /* DBG1("CMD_READ [$%08lx].", (LONG)req); */
+        if (!req->ios2_BufferManagement)
+        {
+            /* Query-only (OPENF_MONITOR) opener */
+            IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_GENERIC_ERROR);
+            break;
+        }
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
@@ -593,6 +611,12 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
             req->ios2_DstAddr[i] = 0xFF;
     case CMD_WRITE:
         /* DBG1("CMD_WRITE [$%08lx].", (LONG)req); */
+        if (!req->ios2_BufferManagement)
+        {
+            /* Query-only (OPENF_MONITOR) opener */
+            IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_GENERIC_ERROR);
+            break;
+        }
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
@@ -905,7 +929,8 @@ struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
     /* Exclusive access: reject an exclusive open of a unit somebody else has open, and any */
     /* open of a unit somebody else holds exclusively.                                      */
 
-    if (ud->ud_OpenCnt && ((flags & SANA2OPF_MINE) || (ud->ud_Flags & UF_EXCLUSIVE)))
+    if (!(flags & OPENF_MONITOR) && ud->ud_OpenCnt &&
+        ((flags & SANA2OPF_MINE) || (ud->ud_Flags & UF_EXCLUSIVE)))
         return NULL;
 
     if (flags & SANA2OPF_MINE)
