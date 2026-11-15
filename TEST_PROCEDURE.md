@@ -3,16 +3,11 @@
 ## Test 1: Server Setup (macOS/Linux)
 
 1. Open a terminal on your macOS machine
-2. Navigate to the driver directory:
-   ```bash
-   cd /Users/steenlund/Amiga/openpci-rtl8029-src
-   ```
+2. Navigate to the root of this repository
 
 3. Build the server (if needed):
    ```bash
-   cd macOS/src
-   make
-   cd ../..
+   make -C macOS/src -f Makefile.server
    ```
 
 4. Run the server (it will show you its IP addresses):
@@ -147,6 +142,13 @@ Both sides verify:
 - Pattern integrity throughout the entire packet
 - TCP stream reassembly (handles partial receives)
 
+**Endianness Test (both directions):**
+- After the packet tests, the client sends a length-prefixed, packed 22-byte struct
+  (32-bit magic, 16-bit version, 32-bit counter, float, 64-bit timestamp) in network
+  byte order; the server verifies each field and replies `ENDIAN-OK` / `ENDIAN-ERROR`
+- The server then sends its own struct (different values) and the client verifies it
+- Both sides print the raw bytes received, and `PASSED` / `FAILED` per direction
+
 ## Test 3: Basic Ping Test
 
 Before running the client, try a simple ping:
@@ -169,7 +171,4 @@ If tests fail, check:
 
 ## Current Known Issues
 
-- DMA reads are returning 0x0000/0xFFFF patterns
-- This suggests cache barriers aren't working correctly
-- Buffer overflow is occurring
-- May need different approach to cache coherency
+- The driver drops packets and eventually stops working (stalls); root cause not yet found
