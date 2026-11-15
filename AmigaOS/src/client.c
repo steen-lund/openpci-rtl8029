@@ -394,7 +394,7 @@ tx_done:
     }
 
     // Receive endianness test data from server
-    printf("\nEndianness test (Server→Client): Receiving binary data...\n");
+    printf("\nEndianness test (Server->Client): Receiving binary data...\n");
 
     // Read length prefix
     uint32_t srv_net_size;
@@ -494,7 +494,7 @@ tx_done:
         PrintFault(IoErr(), "send endian response");
     }
 
-    printf("\nEndianness test (Server→Client): %s\n", srv_endian_errors == 0 ? "PASSED" : "FAILED");
+    printf("\nEndianness test (Server->Client): %s\n", srv_endian_errors == 0 ? "PASSED" : "FAILED");
 
     if (srv_endian_errors > 0) {
         tx_errors++;  // Count as TX error since it affects overall result
