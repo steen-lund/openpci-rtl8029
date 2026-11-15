@@ -36,6 +36,25 @@ static struct
     struct Sana2SpecialStatRecord records[MAX_RECORDS];
 } stats;
 
+/* Value of a named counter, 0 if the driver does not supply it */
+static ULONG stat_value(const char *name)
+{
+    ULONG i;
+
+    for (i = 0; i < stats.header.RecordCountSupplied; i++)
+    {
+        if (!strcmp((const char *)stats.records[i].String, name))
+            return stats.records[i].Count;
+    }
+    return 0;
+}
+
+/* E-clock ticks to microseconds without overflowing 32 bits */
+static ULONG ticks_to_us(ULONG ticks, ULONG eclock)
+{
+    return (ticks / eclock) * 1000000 + ((ticks % eclock) * 1000) / (eclock / 1000);
+}
+
 int main(int argc, char **argv)
 {
     static const char *const names[] = {
@@ -77,6 +96,8 @@ int main(int argc, char **argv)
 
             if (DoIO((struct IORequest *)req) == 0)
             {
+                ULONG eclock = stat_value("EClockFreq");
+
                 for (i = 0; i < stats.header.RecordCountSupplied; i++)
                 {
                     const char *name = (const char *)stats.records[i].String;
@@ -85,6 +106,17 @@ int main(int argc, char **argv)
                     printf("%-14s %10lu  $%08lx", name, (unsigned long)value, (unsigned long)value);
                     if (!strcmp(name, "TaskState") && value < sizeof(task_states) / sizeof(task_states[0]))
                         printf("  (%s)", task_states[value]);
+
+                    /* Time counters: total in milliseconds and the average per packet */
+                    if (!strncmp(name, "Ticks", 5) && eclock)
+                    {
+                        ULONG packets = stat_value(strcmp(name, "TicksTx") ? "RxFrames" : "TxStarted");
+
+                        printf("  %lu ms", ticks_to_us(value, eclock) / 1000);
+                        if (packets)
+                            printf(", %lu us per %s packet", ticks_to_us(value / packets, eclock),
+                                   strcmp(name, "TicksTx") ? "received" : "sent");
+                    }
                     printf("\n");
                 }
                 rc = 0;

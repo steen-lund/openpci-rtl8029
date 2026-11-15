@@ -162,6 +162,12 @@ enum
     DG_LASTCURRENT,   /* card's ring write pointer when last read */
     DG_LASTINTSTATUS, /* last non-zero interrupt status seen by ServiceCard() */
     DG_TASKSTATE,     /* what the unit task is doing, TS_* */
+    DG_MMUINHIBIT,    /* 1 if the card registers are cache-inhibited through mmu.library */
+    DG_ECLOCKFREQ,    /* E-clock ticks per second, the unit of the Ticks counters below */
+    DG_TICKSSERVICE,  /* total time spent in ServiceCard() */
+    DG_TICKSRXREAD,   /* ... of which reading frames from the card */
+    DG_TICKSRXCOPY,   /* ... of which handing frames to the stack (its CopyToBuff + reply) */
+    DG_TICKSTX,       /* total time spent in SendPacket() (the stack's CopyFromBuff + upload) */
     DG_COUNT
 };
 
@@ -177,10 +183,18 @@ static const char *const DiagNames[DG_COUNT] =
     "Interrupts", "ServiceRuns", "RxFrames", "RxDelivered", "RxNoReader", "LastDropType", "RxBadHeader",
     "LastBadHeader", "Overflows", "TxStarted", "TxDone", "TxErrors", "TxNoPending",
     "TxDmaTimeout", "ReadsQueued", "WritesQueued", "TxPending", "NextPage", "LastCurrent",
-    "LastIntStatus", "TaskState"
+    "LastIntStatus", "TaskState", "MMUInhibit", "EClockFreq", "TicksService", "TicksRxRead",
+    "TicksRxCopy", "TicksTx"
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
+
+/* Timing of the packet paths, in E-clock ticks (about 1.4 microseconds). Needs a local   */
+/* TimerBase (USE_U(TimerBase)) and 'struct EClockVal perf_t0, perf_t1' in the function.   */
+/* Only the low 32 bits are used: fine for intervals far below an hour.                    */
+#define PERF_START()      ReadEClock(&perf_t0)
+#define PERF_STOP(n)      (ReadEClock(&perf_t1), DIAG(n) += perf_t1.ev_lo - perf_t0.ev_lo)
+#define PERF_LAP(n)       (PERF_STOP(n), perf_t0 = perf_t1)
 
 ///
 /// device structures
@@ -1179,6 +1193,13 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
 
     DIAG(DG_TXPENDING) = ud->ud_PendingWrite ? 1 : 0;
     DIAG(DG_NEXTPAGE) = ud->ud_NextPage;
+    DIAG(DG_MMUINHIBIT) = ud->ud_UseMMUCacheInhibit ? 1 : 0;
+    {
+        USE_U(TimerBase)
+        struct EClockVal now;
+
+        DIAG(DG_ECLOCKFREQ) = ReadEClock(&now);
+    }
 
     rec = (struct Sana2SpecialStatRecord *)(hdr + 1);
     for (i = 0; i < DG_COUNT && i < hdr->RecordCountMax; i++)
@@ -1646,6 +1667,10 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     UWORD *ethdata = (UWORD *)ethbuffer;
     ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
+    USE_U(TimerBase)
+    struct EClockVal perf_t0, perf_t1;
+
+    PERF_START();
 
     /* ethbuffer holds one frame: refuse anything longer than the MTU (plus the Ethernet    */
     /* header for raw packets, which carry their own).                                      */
@@ -1751,6 +1776,7 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     /* then we will be able to reply IORequest in the interrupt server.                                    */
 
     /* DBG_T("Packet sent."); */
+    PERF_STOP(DG_TICKSTX);
     return TRUE;
 }
 
@@ -1949,14 +1975,17 @@ void StartNextWrite(struct UnitData *ud)
 void ServiceCard(struct UnitData *ud)
 {
     USE_U(SysBase)
+    USE_U(TimerBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     struct IOSana2Req *req;
     UBYTE intstatus;
+    struct EClockVal perf_t0, perf_t1, perf_service;
 
     if (!(ud->ud_Flags & UF_ONLINE))
         return;
 
     DIAG(DG_SERVICERUNS)++;
+    ReadEClock(&perf_service);
 
     hw->regs[NE2000_INT_MASK] = 0;
     ud->ud_IntMasked = TRUE;
@@ -2009,10 +2038,12 @@ void ServiceCard(struct UnitData *ud)
             hw_write_barrier(hw, ud);
             hw_read_barrier(hw, ud);
 
+            PERF_START();
             while (RingBufferNotEmpty(ud))
             {
                 DIAG(DG_TASKSTATE) = TS_RXDRAIN;
                 len = PacketReceived(ud);
+                PERF_LAP(DG_TICKSRXREAD);
 
                 /* PacketReceived() returns 0 for a corrupt ring header - reset the ring */
                 if (!len)
@@ -2046,7 +2077,9 @@ void ServiceCard(struct UnitData *ud)
                     DIAG(DG_RXNOREADER)++;
                     DIAG(DG_LASTDROPTYPE) = ud->ud_RxBuffer[6];
                 }
+                PERF_LAP(DG_TICKSRXCOPY);
             }
+            PERF_STOP(DG_TICKSRXREAD); /* the final "ring is empty" check */
         }
 
         /* Keep transmitting while a long receive burst is being drained */
@@ -2058,6 +2091,8 @@ void ServiceCard(struct UnitData *ud)
     /* Unmask. If something became pending since the loop ended the card interrupts at once */
     /* and IntCode() signals us again. Not if S2_OFFLINE took the card down meanwhile.      */
     DIAG(DG_TASKSTATE) = TS_PORT;
+    ReadEClock(&perf_t1);
+    DIAG(DG_TICKSSERVICE) += perf_t1.ev_lo - perf_service.ev_lo;
     if (ud->ud_Flags & UF_ONLINE)
     {
         ud->ud_IntMasked = FALSE; /* before the write, see IntCode() */
