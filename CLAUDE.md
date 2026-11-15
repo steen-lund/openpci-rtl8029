@@ -46,7 +46,7 @@ Diagnosing on the real machine:
 - The Amiga can be pinged from the development Mac; a size sweep (`ping -s <n> <amiga-ip>`, frame = n + 42) is a quick deterministic check of frame-size handling. The client/server test did not catch a bug that dropped every frame of 1511+ bytes; the sweep did.
 - `sudo tcpdump -i en0 -w file.pcap host <amiga-ip>` on the Mac shows which frames the Amiga fails to acknowledge.
 
-The client and server implement one fixed protocol and must be changed together: handshake, then 14 length-prefixed pattern packets (64–4096 bytes, odd and even sizes, same list in both sources) server→client, the same 14 client→server, then a packed 22-byte binary struct in each direction to check byte order. Any step added on one side needs its counterpart on the other, in the same order.
+The client and server implement one fixed protocol and must be changed together: handshake, then 14 length-prefixed pattern packets (64–4096 bytes, odd and even sizes, same list in both sources) server→client, the same 14 client→server, then a packed 22-byte binary struct in each direction to check byte order. Last comes a UDP echo phase (client sends datagrams of exact sizes, server echoes them, client compares): one datagram is exactly one frame of payload + 42 bytes, covering 60 bytes and every size from 1506 to the 1514-byte maximum. This is the part that checks frame-size handling; the TCP phases cannot, because TCP retransmits and macOS quietly falls back to smaller segments when full-size ones go unanswered. Any step added on one side needs its counterpart on the other, in the same order.
 
 ## Driver architecture
 

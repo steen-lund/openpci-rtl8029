@@ -176,5 +176,9 @@ If tests fail, check:
 - From the Mac, sweep frame sizes with ping: `ping -c 3 -s 1472 <amiga_ip>` is a full-size
   1514-byte frame; `-s 56` a small one.
 
+After the endianness test the client runs a frame size test: UDP datagrams of exact sizes
+(60-byte up to full 1514-byte frames) are echoed by the server and compared. Each size prints
+`OK` or `LOST`; any `LOST` near 1514 bytes means full-size frames are not getting through.
+
 Note: the test now sends 14 packet sizes per direction (odd and even), not the 8 shown in
 the example output above, and the payload bytes vary instead of repeating one value.

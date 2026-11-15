@@ -9,11 +9,14 @@
 #include <netdb.h>
 #include <ifaddrs.h>
 #include <signal.h>
+#include <sys/select.h>
 
 #define PORT 10203
 #define BUFFER_SIZE 8192
 #define EXPECTED_MESSAGE "Hello, Server!"
 #define RESPONSE "Hello, Client!"
+#define UDP_DONE "UDP-DONE"
+#define UDP_HEADERS 42  // Ethernet + IP + UDP headers around one datagram
 
 // Test packet sizes to exercise different buffer scenarios
 static const size_t test_sizes[] = {
@@ -83,6 +86,14 @@ int main()
     res = bind(socket_fd, (struct sockaddr *)&addr, sizeof(addr));
     if (res < 0) {
         perror("bind");
+        close(socket_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    // UDP echo socket for the frame size test, same port number
+    int udp_fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (udp_fd < 0 || bind(udp_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("udp socket");
         close(socket_fd);
         exit(EXIT_FAILURE);
     }
@@ -466,7 +477,46 @@ done:
         }
     }
 
+    // Frame size test: echo every UDP datagram back unchanged until the client says it is
+    // done over TCP (or closes the connection).
+    printf("\nFrame size test: echoing UDP datagrams...\n");
+    for (;;) {
+        fd_set rfds;
+        struct timeval tv = { 30, 0 };
+        int maxfd = udp_fd > client_socket_fd ? udp_fd : client_socket_fd;
+
+        FD_ZERO(&rfds);
+        FD_SET(udp_fd, &rfds);
+        FD_SET(client_socket_fd, &rfds);
+        if (select(maxfd + 1, &rfds, NULL, NULL, &tv) <= 0) {
+            printf("  No traffic for 30 seconds, giving up.\n");
+            break;
+        }
+
+        if (FD_ISSET(udp_fd, &rfds)) {
+            struct sockaddr_in from;
+            socklen_t from_len = sizeof(from);
+            ssize_t got = recvfrom(udp_fd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&from, &from_len);
+            if (got > 0) {
+                printf("  %4zd-byte frame received, echoing\n", got + UDP_HEADERS);
+                sendto(udp_fd, buffer, got, 0, (struct sockaddr *)&from, from_len);
+            }
+        }
+
+        if (FD_ISSET(client_socket_fd, &rfds)) {
+            char done[32];
+            ssize_t got = read(client_socket_fd, done, sizeof(done) - 1);
+            if (got <= 0) {
+                printf("Client closed connection.\n");
+            } else {
+                printf("Frame size test finished.\n");
+            }
+            break;
+        }
+    }
+
 cleanup:
+    close(udp_fd);
     close(client_socket_fd);
     close(socket_fd);
 

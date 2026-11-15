@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sys/time.h>
 #include <proto/exec.h>
 #include <proto/bsdsocket.h>
 #include <proto/dos.h>
@@ -21,6 +22,20 @@ static const size_t tx_test_sizes[] = {
     64, 65, 100, 101, 256, 333, 512, 1001, 1024, 1459, 1461, 1518, 2048, 4096
 };
 #define NUM_TEST_SIZES (sizeof(tx_test_sizes) / sizeof(tx_test_sizes[0]))
+
+// UDP echo test: one datagram is exactly one Ethernet frame of payload + 42 bytes
+// (14 Ethernet + 20 IP + 8 UDP), so unlike TCP - which retransmits and may quietly
+// switch to smaller segments - this pins down the frame size on the wire. 18 is the
+// 60-byte minimum frame, 1472 the 1514-byte maximum; every size near the top is covered.
+static const size_t udp_test_sizes[] = {
+    18, 19, 100, 101, 1000, 1400, 1464, 1465, 1466, 1467, 1468, 1469, 1470, 1471, 1472
+};
+#define NUM_UDP_SIZES (sizeof(udp_test_sizes) / sizeof(udp_test_sizes[0]))
+#define UDP_HEADERS 42
+#define UDP_ATTEMPTS 3
+#define UDP_TIMEOUT_SECS 2
+#define UDP_DONE "UDP-DONE"
+
 #define MESSAGE "Hello, Server!"
 #define EXPECTED_RESPONSE "Hello, Client!"
 
@@ -123,6 +138,7 @@ int main(void)
     // Receive and verify test packets
     int packet_num = 0;
     int errors = 0;
+    int udp_errors = 0;
     const int expected_packets = NUM_TEST_SIZES;  // Server sends the same set of sizes
 
     while (packet_num < expected_packets) {
@@ -484,14 +500,88 @@ tx_done:
         tx_errors++;  // Count as TX error since it affects overall result
     }
 
+    // UDP echo test: exact frame sizes, both directions
+    printf("\nFrame size test (UDP echo, %d attempts each)...\n", UDP_ATTEMPTS);
+    {
+        int udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        unsigned char *udp_tx = malloc(1472);
+
+        if (udp_fd < 0 || !udp_tx) {
+            printf("  ERROR: cannot set up UDP test\n");
+            udp_errors++;
+        } else {
+            for (size_t i = 0; i < NUM_UDP_SIZES; i++) {
+                size_t size = udp_test_sizes[i];
+                int ok = 0;
+
+                for (int attempt = 1; attempt <= UDP_ATTEMPTS && !ok; attempt++) {
+                    // First two bytes identify the datagram, the rest varies per byte
+                    udp_tx[0] = (unsigned char)i;
+                    udp_tx[1] = (unsigned char)attempt;
+                    for (size_t k = 2; k < size; k++) {
+                        udp_tx[k] = (unsigned char)(i * 17 + (k % 251));
+                    }
+
+                    if (sendto(udp_fd, udp_tx, size, 0,
+                               (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+                        break;
+                    }
+
+                    // Wait for the echo of this datagram; skip late echoes of earlier ones
+                    for (;;) {
+                        fd_set rfds;
+                        struct timeval tv;
+
+                        FD_ZERO(&rfds);
+                        FD_SET(udp_fd, &rfds);
+                        tv.tv_sec = UDP_TIMEOUT_SECS;
+                        tv.tv_usec = 0;
+                        if (WaitSelect(udp_fd + 1, &rfds, NULL, NULL, &tv, NULL) <= 0) {
+                            break;  // timeout
+                        }
+
+                        LONG got = recv(udp_fd, buffer, BUFFER_SIZE, 0);
+                        if (got < 2 || (unsigned char)buffer[0] != udp_tx[0] ||
+                            (unsigned char)buffer[1] != udp_tx[1]) {
+                            continue;
+                        }
+                        if ((size_t)got == size && memcmp(buffer, udp_tx, size) == 0) {
+                            ok = 1;
+                        } else {
+                            printf("  %4zu-byte frame: echo differs (%ld bytes back)\n",
+                                   size + UDP_HEADERS, (long)got);
+                        }
+                        break;
+                    }
+                }
+
+                printf("  %4zu-byte frame: %s\n", size + UDP_HEADERS, ok ? "OK" : "LOST");
+                if (!ok) {
+                    udp_errors++;
+                }
+            }
+        }
+
+        if (udp_tx) {
+            free(udp_tx);
+        }
+        if (udp_fd >= 0) {
+            CloseSocket(udp_fd);
+        }
+    }
+    printf("Frame size test: %s\n", udp_errors == 0 ? "PASSED" : "FAILED");
+
+    // Tell the server the UDP phase is over
+    send(socket_fd, (char *)UDP_DONE, strlen(UDP_DONE), 0);
+
 final_cleanup:
     printf("\n");
-    printf("Overall: RX=%d errors, TX=%d errors\n", errors, tx_errors);
+    printf("Overall: RX=%d errors, TX=%d errors, frame size=%d errors\n", errors, tx_errors, udp_errors);
 
     free(buffer);
     CloseSocket(socket_fd);
     CloseLibrary(SocketBase);
     FreeArgs(rdargs);
 
-    return (errors > 0 || tx_errors > 0) ? 1 : 0;
+    return (errors > 0 || tx_errors > 0 || udp_errors > 0) ? 1 : 0;
 }
