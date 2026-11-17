@@ -48,6 +48,15 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 /* cycles per packet (the bus cycles are what packet transfer time consists of). Set to 0  */
 /* to move packet data 16 bits at a time as the original driver did.                       */
 #define USE_LONG_DMA 1
+
+/* Frames are kept in memory starting 2 bytes past a longword boundary, so that the data   */
+/* after the 14 byte Ethernet header is longword aligned. The stack copies that data to or */
+/* from its own (aligned) buffers, and a copy between differently aligned addresses can be */
+/* several times slower. Linux does the same (NET_IP_ALIGN).                                */
+#define FRAME_ALIGN 2
+
+/* m68k compilers only guarantee word alignment, even for longword arrays: round up first */
+#define FRAME_START(space) ((UBYTE *)((((ULONG)(space)) + 3) & ~3UL) + FRAME_ALIGN)
 #define DMAPORT_LONG(ne) ((ne)->DMAPortLong)
 
 /* Cache control flags for hardware I/O */
@@ -330,7 +339,8 @@ struct UnitData
     struct pci_dev* ud_PciDev;
     ULONG ud_OpenCnt;
     ULONG ud_ServiceMask;
-    UWORD ud_RxBuffer[768];
+    ULONG ud_RxSpace[386];   /* storage for ud_RxBuffer (1536 bytes + alignment) */
+    UWORD *ud_RxBuffer;      /* one received frame, 2 bytes into ud_RxSpace: see FRAME_ALIGN */
     UBYTE ud_Name[27];
     UBYTE ud_EtherAddress[6];
     UBYTE ud_SoftAddress[6];
@@ -1107,6 +1117,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 
             ud->ud_NextPage = RX_BUFFER;
             ud->ud_TxActive = ud->ud_TxWaiting = -1;
+            ud->ud_RxBuffer = (UWORD *)FRAME_START(ud->ud_RxSpace);
 
             /* Cache barriers are only needed if the registers are not cache-inhibited already */
             ud->ud_UseMMUCacheInhibit = hw_is_cache_inhibited(ud);
@@ -1696,9 +1707,16 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 
 #if USE_LONG_DMA
     {
-        ULONG *lbuffer = (ULONG *)buffer;
+        ULONG *lbuffer;
         UWORD longs;
 
+        /* One word first if the buffer is not longword aligned, then aligned longwords */
+        if ((ULONG)buffer & 2)
+        {
+            *buffer++ = ne->DMAPort;
+            count -= 2;
+        }
+        lbuffer = (ULONG *)buffer;
         for (longs = count >> 2; longs; longs--)
             *lbuffer++ = DMAPORT_LONG(ne);
         if (count & 2)
@@ -1914,7 +1932,8 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
 {
     USE_U(SysBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
-    UBYTE ethbuffer[1536], *datapointer;
+    ULONG ethspace[386];                                  /* one frame, see FRAME_ALIGN */
+    UBYTE *ethbuffer = FRAME_START(ethspace), *datapointer;
     ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
     PERF_VARS;
@@ -1995,11 +2014,21 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
 
 #if USE_LONG_DMA
     {
-        ULONG *ldata = (ULONG *)ethbuffer;
+        UBYTE *data = ethbuffer;
+        UWORD left = dma_len;
+        ULONG *ldata;
 
-        for (cycles = dma_len >> 2; cycles; cycles--)
+        /* One word first if the frame is not longword aligned, then aligned longwords */
+        if ((ULONG)data & 2)
+        {
+            hw->DMAPort = *(UWORD *)data;
+            data += 2;
+            left -= 2;
+        }
+        ldata = (ULONG *)data;
+        for (cycles = left >> 2; cycles; cycles--)
             DMAPORT_LONG(hw) = *ldata++;
-        if (dma_len & 2)
+        if (left & 2)
             hw->DMAPort = *(UWORD *)ldata;
     }
 #else
