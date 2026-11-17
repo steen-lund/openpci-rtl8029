@@ -59,7 +59,7 @@ Nearly everything is in `ne2000/driver.c` (sections are delimited by `///` fold 
 
 Three execution contexts share a `UnitData`:
 
-- **Caller context** — `DevBeginIO()` answers pure queries inline (`S2_DEVICEQUERY`, station address, statistics) and forwards everything that touches the card or the queues to the unit task's message port: `CMD_READ`, `CMD_WRITE`, `S2_BROADCAST`, `CMD_FLUSH`, and the state changes `S2_CONFIGINTERFACE`, `S2_ONLINE`, `S2_OFFLINE`.
+- **Caller context** — `DevBeginIO()` answers pure queries inline (`S2_DEVICEQUERY`, station address, statistics). It puts `CMD_READ`, `CMD_WRITE` and `S2_BROADCAST` straight onto the unit's request queues (no task switch), waking the unit task for a write only if a transmit buffer is free. Everything that touches the card is forwarded to the unit task's message port: `CMD_FLUSH` and the state changes `S2_CONFIGINTERFACE`, `S2_ONLINE`, `S2_OFFLINE`.
 - **Unit task** — `UnitTask()`/`MainLoop()`, one per opened unit. Queues read requests on `ud_RxQueue` and write requests on `ud_TxQueue`. The card has two transmit buffers: `StartNextWrite()` uploads queued frames into free ones with `UploadPacket()`, so the next frame is already on the card while one is on the wire, and `TransmitBuffer()` puts a buffer on the wire.
 - **Interrupt server** — `IntCode()`, installed via `pci_add_intserver()`. It does no packet work: it masks the card's interrupts and signals the unit task (`ud_ServiceMask`).
 
@@ -69,7 +69,7 @@ Rules that follow from this (each has been broken before and caused stalls):
 
 - Do not use `Disable()`/`Enable()` (discouraged on current OS 3.x). The design avoids needing them: every access to the card except the mask-and-signal in `IntCode()` happens in the unit task.
 - `IntCode()` must stay minimal: no `Delay()`, no semaphores, no debug output, no packet work.
-- The request queues are shared between the unit task and callers (`DevAbortIO()`) and are protected by `ud_RxSem`/`ud_TxSem`. The transmit buffer state (`ud_TxReq[]`, `ud_TxActive`, `ud_TxWaiting`) is touched by the unit task only.
+- The request queues are shared between the unit task and callers (`DevBeginIO()`, `DevAbortIO()`) and are protected by `ud_RxSem`/`ud_TxSem`. Requests queued directly must get `ln_Type = NT_MESSAGE` (`DevAbortIO()` relies on it). A write is never stranded: the unit task frees a transmit buffer before it looks at the queue, and `DevBeginIO()` queues before it checks for a free buffer. `UF_ONLINE` is checked under `ud_TxSem`, which `TakeOffline()` also holds while flushing. The transmit buffer state (`ud_TxReq[]`, `ud_TxActive`, `ud_TxWaiting`) is touched by the unit task only.
 - Register page 1 may only be selected while the card's interrupts are masked (`INT_MASK` = 0): the interrupt chain is shared, so `IntCode()` can run at any time and treats "page 1 selected" as "not our interrupt".
 - State changes run in the unit task too. Going offline (`TakeOffline()`) returns the transmit in flight and all queued requests with `S2ERR_OUTOFSERVICE`; writes arriving while offline are refused the same way, reads are queued. `S2_ONLINE` requires a prior `S2_CONFIGINTERFACE`. When the unit is expunged the task takes the card offline and replies to everything before exiting. The closing task waits for that on a reply port it creates itself (`KillTask()`): a unit is not necessarily closed by the task that opened it (Roadshow's `NetShutdown` is not), and a message port only wakes its creator.
 - A full receive ring (`INT_OVERFLOW`) is recovered with `OverflowBegin()` / drain / `OverflowEnd()`: the card is stopped for under 2 ms (a busy wait on register reads, not `Delay()`, whose 20 ms minimum loses more packets) and the packets already in the ring are kept. `RingReset()` discards the ring and is only for corrupt ring headers.
@@ -79,6 +79,7 @@ Rules that follow from this (each has been broken before and caused stalls):
 
 Hardware details that matter when touching the RX/TX paths:
 
+- Received and transmitted frames sit 2 bytes past a longword boundary in memory (`FRAME_ALIGN`, `FRAME_START()`), so the data after the Ethernet header is longword aligned for the stack's copies.
 - Card memory layout is in 256-byte pages: two transmit buffers of 6 pages each from page `0x40`, then the RX ring from `0x4C` (`RX_BUFFER`) to `0x80` (`BUFFER_END`). `ud_NextPage` is the software read pointer; the `BOUNDARY` register is kept one page behind it.
 - The byte count in the RX ring header is the Ethernet frame length plus 4. `PacketReceived()` strips those 4 bytes; passing them on makes full-size frames exceed the MTU and the TCP/IP stack drops them.
 - Remote DMA counts must be even; `UploadPacket()` and `GetPacket()` round up. Packet data moves through the data port 32 bits at a time (`USE_LONG_DMA`), with a final 16-bit access if needed: transfer time is almost all bus cycles, so this is where speed comes from.

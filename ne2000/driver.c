@@ -213,8 +213,8 @@ enum
     DG_SLOWTURN,      /* PERF: times that took more than 5 ms */
     DG_TASKPRI,       /* priority of the unit task */
     DG_TXWIREIDLE,    /* transmits finished with no next frame waiting on the card (wire goes idle) */
-    DG_TXIDLEMSGWAIT, /* ... while requests were already waiting in the unit task's port: the  */
-                      /*     driver, not the stack, was too slow to pick them up              */
+    DG_TXIDLEMSGWAIT, /* ... while write requests were already queued: the driver, not the    */
+                      /*     stack, was too slow to pick them up                              */
     DG_TICKSTXCOPY,   /* PERF: part of TicksTx in the stack's CopyFromBuff */
     DG_TICKSTXUPLOAD, /* PERF: part of TicksTx writing the frame to the card */
     DG_TICKSTXWAIT,   /* PERF: part of TicksTx waiting for the card to report the upload done */
@@ -701,8 +701,15 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
             IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_GENERIC_ERROR);
             break;
         }
+
+        /* Queued here rather than sent to the unit task: saves two task switches per read. */
+        /* The queue is protected by its semaphore; the unit task takes reads from it.      */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
-        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
+        req->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;   /* see DevAbortIO() */
+        DIAG(DG_READSQUEUED)++;
+        ObtainSemaphore(&ud->ud_RxSem);
+        AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
+        ReleaseSemaphore(&ud->ud_RxSem);
         break;
 
     case S2_BROADCAST:
@@ -716,8 +723,32 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
             IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_GENERIC_ERROR);
             break;
         }
+
+        /* Queued here rather than sent to the unit task, which only needs waking if one of */
+        /* the card's transmit buffers is free: while both are loaded, the transmit-done     */
+        /* interrupt will take the next frame from the queue anyway. That saves two task     */
+        /* switches per frame when sending at full speed.                                    */
+        /*                                                                                   */
+        /* No frame is lost between the two: the unit task frees a buffer before it looks at */
+        /* the queue, and the request is queued here before the buffers are checked. So     */
+        /* either the unit task finds the request, or this sees the free buffer and wakes it.*/
+        /* UF_ONLINE is checked under the semaphore: going offline clears it before flushing */
+        /* the queue under the same semaphore.                                               */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
-        PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
+        req->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;   /* see DevAbortIO() */
+        PERF_SINCE(ud->ud_RxStamp, ud->ud_RxStampSet, DG_MAXTICKSTURN, DG_SLOWTURN, PERF_TICKS_5MS);
+        ObtainSemaphore(&ud->ud_TxSem);
+        if (!(ud->ud_Flags & UF_ONLINE))
+        {
+            ReleaseSemaphore(&ud->ud_TxSem);
+            IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);   /* the card is stopped */
+            break;
+        }
+        DIAG(DG_WRITESQUEUED)++;
+        AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
+        ReleaseSemaphore(&ud->ud_TxSem);
+        if (!ud->ud_TxReq[0] || !ud->ud_TxReq[1])
+            Signal(ud->ud_Task, ud->ud_ServiceMask);
         break;
 
     case CMD_FLUSH:
@@ -2364,13 +2395,11 @@ void ServiceCard(struct UnitData *ud)
             }
             else
             {
-                /* Diagnostics: the wire is idle now. Is a request already waiting in our port */
-                /* (the driver is behind) or has the stack not supplied one? Only the list's    */
-                /* tail pointer is read, a single long: no locking needed for this estimate.    */
-                struct List *msgs = &ud->ud_TaskPort->mp_MsgList;
-
+                /* Diagnostics: the wire is idle now. Is a write already queued (the driver is */
+                /* behind) or has the stack not supplied one? Only the list's tail pointer is   */
+                /* read, a single long: no locking needed for this estimate.                    */
                 DIAG(DG_TXWIREIDLE)++;
-                if (msgs->lh_TailPred != (struct Node *)msgs)
+                if (ud->ud_TxQueue.mlh_TailPred != (struct MinNode *)&ud->ud_TxQueue)
                     DIAG(DG_TXIDLEMSGWAIT)++;
             }
 
@@ -2536,14 +2565,6 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
             {
                 switch (req->ios2_Req.io_Command)
                 {
-                case CMD_READ:
-                    /* DBG1_T("-> READ [$%08lx].", req); */
-                    DIAG(DG_READSQUEUED)++;
-                    ObtainSemaphore(&ud->ud_RxSem);
-                    AddTail((struct List *)&ud->ud_RxQueue, (struct Node *)req);
-                    ReleaseSemaphore(&ud->ud_RxSem);
-                    break;
-
                 case S2_CONFIGINTERFACE:
                     S2ConfigInterface(ud, req);
                     break;
@@ -2554,23 +2575,6 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
 
                 case S2_OFFLINE:
                     S2Offline(ud, req);
-                    break;
-
-                case S2_BROADCAST:
-                case CMD_WRITE:
-                    /* DBG1_T("-> WRITE [$%08lx].", req); */
-                    if (!(ud->ud_Flags & UF_ONLINE))
-                    {
-                        /* The card is stopped: nothing may be sent to it */
-                        IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
-                        break;
-                    }
-                    DIAG(DG_WRITESQUEUED)++;
-                    PERF_SINCE(ud->ud_RxStamp, ud->ud_RxStampSet, DG_MAXTICKSTURN, DG_SLOWTURN, PERF_TICKS_5MS);
-                    ObtainSemaphore(&ud->ud_TxSem);
-                    AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
-                    ReleaseSemaphore(&ud->ud_TxSem);
-                    StartNextWrite(ud);
                     break;
 
                 case CMD_FLUSH:
