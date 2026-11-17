@@ -60,16 +60,16 @@ Nearly everything is in `ne2000/driver.c` (sections are delimited by `///` fold 
 Three execution contexts share a `UnitData`:
 
 - **Caller context** — `DevBeginIO()` answers pure queries inline (`S2_DEVICEQUERY`, station address, statistics) and forwards everything that touches the card or the queues to the unit task's message port: `CMD_READ`, `CMD_WRITE`, `S2_BROADCAST`, `CMD_FLUSH`, and the state changes `S2_CONFIGINTERFACE`, `S2_ONLINE`, `S2_OFFLINE`.
-- **Unit task** — `UnitTask()`/`MainLoop()`, one per opened unit. Queues read requests on `ud_RxQueue` and write requests on `ud_TxQueue`; `StartNextWrite()` sends the next one with `SendPacket()` when `ud_PendingWrite` is empty. Only one transmit is in flight at a time.
+- **Unit task** — `UnitTask()`/`MainLoop()`, one per opened unit. Queues read requests on `ud_RxQueue` and write requests on `ud_TxQueue`. The card has two transmit buffers: `StartNextWrite()` uploads queued frames into free ones with `UploadPacket()`, so the next frame is already on the card while one is on the wire, and `TransmitBuffer()` puts a buffer on the wire.
 - **Interrupt server** — `IntCode()`, installed via `pci_add_intserver()`. It does no packet work: it masks the card's interrupts and signals the unit task (`ud_ServiceMask`).
 
-The unit task then runs `ServiceCard()`: TX done/error completes `ud_PendingWrite`; RX drains the card's ring buffer (`PacketReceived()` → `GetPacketHeader()` + `GetPacket()` copy each frame via remote DMA into `ud_RxBuffer`, then `SearchReadRequest()` finds a pending read of the matching packet type and completes it); finally it starts the next queued transmit and unmasks the card. A frame with no matching pending read request is silently discarded.
+The unit task then runs `ServiceCard()`: TX done/error completes the request of the buffer that was on the wire and immediately starts the other buffer if it is loaded; RX drains the card's ring buffer (`PacketReceived()` → `GetPacketHeader()` + `GetPacket()` copy each frame via remote DMA into `ud_RxBuffer`, then `SearchReadRequest()` finds a pending read of the matching packet type and completes it); finally it starts the next queued transmit and unmasks the card. A frame with no matching pending read request is silently discarded.
 
 Rules that follow from this (each has been broken before and caused stalls):
 
 - Do not use `Disable()`/`Enable()` (discouraged on current OS 3.x). The design avoids needing them: every access to the card except the mask-and-signal in `IntCode()` happens in the unit task.
 - `IntCode()` must stay minimal: no `Delay()`, no semaphores, no debug output, no packet work.
-- The request queues are shared between the unit task and callers (`DevAbortIO()`) and are protected by `ud_RxSem`/`ud_TxSem`. `ud_PendingWrite` is touched by the unit task only.
+- The request queues are shared between the unit task and callers (`DevAbortIO()`) and are protected by `ud_RxSem`/`ud_TxSem`. The transmit buffer state (`ud_TxReq[]`, `ud_TxActive`, `ud_TxWaiting`) is touched by the unit task only.
 - Register page 1 may only be selected while the card's interrupts are masked (`INT_MASK` = 0): the interrupt chain is shared, so `IntCode()` can run at any time and treats "page 1 selected" as "not our interrupt".
 - State changes run in the unit task too. Going offline (`TakeOffline()`) returns the transmit in flight and all queued requests with `S2ERR_OUTOFSERVICE`; writes arriving while offline are refused the same way, reads are queued. `S2_ONLINE` requires a prior `S2_CONFIGINTERFACE`. When the unit is expunged the task takes the card offline and replies to everything before exiting. The closing task waits for that on a reply port it creates itself (`KillTask()`): a unit is not necessarily closed by the task that opened it (Roadshow's `NetShutdown` is not), and a message port only wakes its creator.
 - TX upload and RX download share the card's single remote-DMA channel; they are serialized by both running in the unit task.
@@ -77,9 +77,9 @@ Rules that follow from this (each has been broken before and caused stalls):
 
 Hardware details that matter when touching the RX/TX paths:
 
-- Card memory layout is in 256-byte pages: TX buffer at page `0x40`, RX ring from `0x46` (`RX_BUFFER`) to `0x80` (`BUFFER_END`). `ud_NextPage` is the software read pointer; the `BOUNDARY` register is kept one page behind it.
+- Card memory layout is in 256-byte pages: two transmit buffers of 6 pages each from page `0x40`, then the RX ring from `0x4C` (`RX_BUFFER`) to `0x80` (`BUFFER_END`). `ud_NextPage` is the software read pointer; the `BOUNDARY` register is kept one page behind it.
 - The byte count in the RX ring header is the Ethernet frame length plus 4. `PacketReceived()` strips those 4 bytes; passing them on makes full-size frames exceed the MTU and the TCP/IP stack drops them.
-- Remote DMA counts must be even; `SendPacket()` and `GetPacket()` round up. Packet data moves through the data port 32 bits at a time (`USE_LONG_DMA`), with a final 16-bit access if needed: transfer time is almost all bus cycles, so this is where speed comes from.
+- Remote DMA counts must be even; `UploadPacket()` and `GetPacket()` round up. Packet data moves through the data port 32 bits at a time (`USE_LONG_DMA`), with a final 16-bit access if needed: transfer time is almost all bus cycles, so this is where speed comes from.
 - Registers are byte-wide (`ud_Hardware->regs[]`); packet data moves through the 16-bit `DMAPort`. The card is little-endian and the CPU big-endian, so byte order of each word read from `DMAPort` is significant — `GetPacketHeader()` documents the layout, and this has been wrong and reverted more than once in git history. `ud_RxBuffer` is indexed in 16-bit words (e.g. `[6]` is the EtherType, offset 7 skips the 14-byte header).
 - Cache coherency for the memory-mapped registers: at unit start `hw_is_cache_inhibited()` asks `mmu.library` for the live page properties of the registers. OpenPCI normally maps PCI space cache-inhibited, and then `hw_read_barrier()`/`hw_write_barrier()` do nothing; otherwise (or without `mmu.library`) they flush with `CacheClearE()`, which is slow. The driver never changes the mapping itself.
 

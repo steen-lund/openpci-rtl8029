@@ -36,8 +36,11 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 
 #define OK 0
 
+/* Card memory, in 256 byte pages: two transmit buffers of one full frame each, so that  */
+/* the next frame can be uploaded while one is on the wire, then the receive ring.         */
 #define TX_BUFFER   0x40
-#define RX_BUFFER   0x46
+#define TX_PAGES    6
+#define RX_BUFFER   (TX_BUFFER + 2 * TX_PAGES)
 #define BUFFER_END  0x80
 #define INTMASK     (INT_RXPACKET | INT_TXPACKET | INT_TXERROR | INT_OVERFLOW)
 
@@ -168,7 +171,7 @@ enum
     DG_TXDMATIMEOUT,  /* upload to the card did not report completion */
     DG_READSQUEUED,   /* CMD_READ requests received */
     DG_WRITESQUEUED,  /* CMD_WRITE/S2_BROADCAST requests received */
-    DG_TXPENDING,     /* 1 if a transmit is in flight */
+    DG_TXPENDING,     /* requests held in the card's transmit buffers (0 to 2) */
     DG_NEXTPAGE,      /* driver's ring read pointer */
     DG_LASTCURRENT,   /* card's ring write pointer when last read */
     DG_LASTINTSTATUS, /* last non-zero interrupt status seen by ServiceCard() */
@@ -178,7 +181,7 @@ enum
     DG_TICKSSERVICE,  /* total time spent in ServiceCard() */
     DG_TICKSRXREAD,   /* ... of which reading frames from the card */
     DG_TICKSRXCOPY,   /* ... of which handing frames to the stack (its CopyToBuff + reply) */
-    DG_TICKSTX,       /* total time spent in SendPacket() (the stack's CopyFromBuff + upload) */
+    DG_TICKSTX,       /* total time spent in UploadPacket() (the stack's CopyFromBuff + upload) */
     DG_RXALIGNERRORS, /* card tally: received frames with alignment errors (dropped by the card) */
     DG_RXCRCERRORS,   /* card tally: received frames with CRC errors (dropped by the card) */
     DG_RXMISSED,      /* card tally: frames the card could not store (ring full or card stopped) */
@@ -206,7 +209,7 @@ enum
 #define TS_PORT      1 /* handling requests */
 #define TS_SERVICE   2 /* in ServiceCard() */
 #define TS_RXDRAIN   3 /* reading packets from the ring */
-#define TS_SEND      4 /* in SendPacket() */
+#define TS_SEND      4 /* in UploadPacket() */
 #define TS_OVERFLOW  5 /* in BufferOverflow() */
 
 static const char *const DiagNames[DG_COUNT] =
@@ -295,7 +298,10 @@ struct UnitData
     struct SignalSemaphore ud_RxSem;
     struct MinList ud_TxQueue;
     struct SignalSemaphore ud_TxSem;
-    struct IOSana2Req *ud_PendingWrite;
+    struct IOSana2Req *ud_TxReq[2];  /* request held by each of the card's two transmit buffers */
+    UWORD ud_TxLen[2];               /* ... and its frame length */
+    BYTE ud_TxActive;                /* buffer being transmitted, -1 if none */
+    BYTE ud_TxWaiting;               /* buffer uploaded and waiting for the wire, -1 if none */
     ULONG ud_IntStamp, ud_RxStamp;   /* PERF timing */
     UBYTE ud_IntStampSet, ud_RxStampSet;
     struct pci_dev* ud_PciDev;
@@ -872,7 +878,7 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
             NP_Entry, (LONG)UnitTask,
             NP_Name, (LONG)ud->ud_Name,
             NP_Priority, 6,
-            NP_StackSize, 16384, /* SendPacket() keeps a full frame on the stack */
+            NP_StackSize, 16384, /* UploadPacket() keeps a full frame on the stack */
             TAG_END)))
     {
         WORD i;
@@ -1062,6 +1068,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
 
 
             ud->ud_NextPage = RX_BUFFER;
+            ud->ud_TxActive = ud->ud_TxWaiting = -1;
 
             /* Cache barriers are only needed if the registers are not cache-inhibited already */
             ud->ud_UseMMUCacheInhibit = hw_is_cache_inhibited(ud);
@@ -1274,7 +1281,7 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
         return;
     }
 
-    DIAG(DG_TXPENDING) = ud->ud_PendingWrite ? 1 : 0;
+    DIAG(DG_TXPENDING) = (ud->ud_TxReq[0] ? 1 : 0) + (ud->ud_TxReq[1] ? 1 : 0);
     DIAG(DG_NEXTPAGE) = ud->ud_NextPage;
     DIAG(DG_MMUINHIBIT) = ud->ud_UseMMUCacheInhibit ? 1 : 0;
 #if PERF_TIMING
@@ -1527,6 +1534,7 @@ BOOL GoOnline(struct UnitData *ud)
 
     /* The reset put the card's ring pointers back to the start: follow them */
     ud->ud_NextPage = RX_BUFFER;
+    ud->ud_TxActive = ud->ud_TxWaiting = -1;
 
     /* For diagnostics: the RTL8029's own configuration (media type, duplex). The card's   */
     /* interrupts are masked here, so another register page may be selected.               */
@@ -1835,12 +1843,13 @@ void BufferOverflow(struct UnitData *ud)
 }
 
 ///
-/// SendPacket()
+/// UploadPacket()
 
-/* Uploads a packet to the card and starts transmitting it. Returns FALSE if the request */
-/* was rejected instead (it has been replied with an error then).                        */
+/* Uploads a packet into one of the card's two transmit buffers. This may be done while   */
+/* the other buffer is being transmitted. Returns FALSE if the request was rejected        */
+/* instead (it has been replied with an error then).                                       */
 
-BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
+BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
 {
     USE_U(SysBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
@@ -1916,7 +1925,7 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     hw->regs[NE2000_DMA_COUNTER0] = dma_len & 0xFF;
     hw->regs[NE2000_DMA_COUNTER1] = dma_len >> 8;
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
-    hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER;
+    hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER + slot * TX_PAGES;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_WRITE;
     hw_write_barrier(hw, ud);  /* Ensure DMA setup reaches hardware before data transfer */
 
@@ -1950,30 +1959,33 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     }
     if (!cycles)
     {
-        DBG_U("SendPacket(): no DMA finished flag after upload.");
+        DBG_U("UploadPacket(): no DMA finished flag after upload.");
         DIAG(DG_TXDMATIMEOUT)++;
     }
     hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH;
 
-    /* Send packet to the wire. Register setup first.                                                      */
-
-    hw->regs[NE2000_TX_PAGE_START] = TX_BUFFER;
-    hw->regs[NE2000_TX_COUNTER0] = data_len & 0xFF;
-    hw->regs[NE2000_TX_COUNTER1] = data_len >> 8;
-
-    /* Three, two, one, go! */
-
-    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_ABORT | COMMAND_TXP;
-    hw_write_barrier(hw, ud);  /* Ensure transmit command reaches hardware */
-
-    /* OK. Packet was sent (succesfully or not). Hardware will respond with TXPACKET or TXERROR interrupt  */
-    /* then we will be able to reply IORequest in the interrupt server.                                    */
-
-    /* DBG_T("Packet sent."); */
+    ud->ud_TxLen[slot] = data_len;
     PERF_STOP(DG_TICKSTX);
     return TRUE;
 }
 
+///
+/// TransmitBuffer()
+
+/* Puts an uploaded transmit buffer on the wire. The card answers with a transmit or       */
+/* transmit-error interrupt, handled in ServiceCard().                                     */
+
+void TransmitBuffer(struct UnitData *ud, WORD slot)
+{
+    volatile struct Ne2000 *hw = ud->ud_Hardware;
+
+    hw->regs[NE2000_TX_PAGE_START] = TX_BUFFER + slot * TX_PAGES;
+    hw->regs[NE2000_TX_COUNTER0] = ud->ud_TxLen[slot] & 0xFF;
+    hw->regs[NE2000_TX_COUNTER1] = ud->ud_TxLen[slot] >> 8;
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_ABORT | COMMAND_TXP;
+    hw_write_barrier(hw, ud);  /* Ensure transmit command reaches hardware */
+    ud->ud_TxActive = slot;
+}
 ///
 /// GetHwAddress()
 
@@ -2112,12 +2124,13 @@ void FlushQueues(struct UnitData *ud, LONG err, LONG werr)
 /// TakeOffline()
 
 /* Unit task only. Stops the card and returns every request the driver holds with          */
-/* S2ERR_OUTOFSERVICE: the transmit in flight (its interrupt will never come now) and all  */
-/* queued reads and writes.                                                                */
+/* S2ERR_OUTOFSERVICE: the transmits in the card's buffers (their interrupts will never    */
+/* come now) and all queued reads and writes.                                              */
 
 void TakeOffline(struct UnitData *ud)
 {
     struct IOSana2Req *req;
+    WORD slot;
 
     if (!(ud->ud_Flags & UF_ONLINE))
         return;
@@ -2125,28 +2138,41 @@ void TakeOffline(struct UnitData *ud)
     ud->ud_Flags &= ~UF_ONLINE;
     GoOffline(ud);
 
-    if ((req = ud->ud_PendingWrite))
+    for (slot = 0; slot < 2; slot++)
     {
-        ud->ud_PendingWrite = NULL;
-        IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
+        if ((req = ud->ud_TxReq[slot]))
+        {
+            ud->ud_TxReq[slot] = NULL;
+            IoDone(ud, req, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
+        }
     }
+    ud->ud_TxActive = ud->ud_TxWaiting = -1;
     FlushQueues(ud, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
 }
 
 ///
 /// StartNextWrite()
 
-/* Starts transmission of the next queued packet unless one is still in flight. Requests   */
-/* SendPacket() rejects are skipped. ud_PendingWrite is only touched by the unit task: set  */
-/* here, cleared in ServiceCard().                                                          */
+/* Fills free transmit buffers from the write queue. A frame is put on the wire at once if */
+/* the wire is free; otherwise it waits, already uploaded, and ServiceCard() starts it the  */
+/* moment the frame before it is done. Requests UploadPacket() rejects are skipped. The     */
+/* transmit state is only touched by the unit task.                                         */
 
 void StartNextWrite(struct UnitData *ud)
 {
     USE_U(SysBase)
     struct IOSana2Req *req;
+    WORD slot;
 
-    while (!ud->ud_PendingWrite)
+    for (;;)
     {
+        if (!ud->ud_TxReq[0])
+            slot = 0;
+        else if (!ud->ud_TxReq[1])
+            slot = 1;
+        else
+            break;
+
         ObtainSemaphore(&ud->ud_TxSem);
         req = (struct IOSana2Req *)RemHead((struct List *)&ud->ud_TxQueue);
         ReleaseSemaphore(&ud->ud_TxSem);
@@ -2154,8 +2180,14 @@ void StartNextWrite(struct UnitData *ud)
         if (!req)
             break;
 
-        if (SendPacket(ud, req))
-            ud->ud_PendingWrite = req;
+        if (UploadPacket(ud, req, slot))
+        {
+            ud->ud_TxReq[slot] = req;
+            if (ud->ud_TxActive < 0)
+                TransmitBuffer(ud, slot);
+            else
+                ud->ud_TxWaiting = slot;
+        }
     }
 }
 
@@ -2220,8 +2252,23 @@ void ServiceCard(struct UnitData *ud)
                 DIAG(DG_TXCARRIERLOST)++;
 
             hw->regs[NE2000_INT_STATUS] = intstatus & (INT_TXERROR | INT_TXPACKET);
-            req = ud->ud_PendingWrite;
-            ud->ud_PendingWrite = NULL;
+
+            /* The buffer that was on the wire is free again... */
+            req = NULL;
+            if (ud->ud_TxActive >= 0)
+            {
+                req = ud->ud_TxReq[ud->ud_TxActive];
+                ud->ud_TxReq[ud->ud_TxActive] = NULL;
+                ud->ud_TxActive = -1;
+            }
+
+            /* ...and if the other one is loaded it goes out right away, before anything else */
+            if (ud->ud_TxWaiting >= 0)
+            {
+                TransmitBuffer(ud, ud->ud_TxWaiting);
+                ud->ud_TxWaiting = -1;
+            }
+
             if (req)
             {
                 if (intstatus & INT_TXERROR)
