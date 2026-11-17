@@ -18,6 +18,7 @@ make driver          # bin/openpci-rtl8029.device (+ unstripped .debug)
 make client          # bin/client (Amiga-side test program)
 make s2stat          # bin/s2stat (Amiga-side tool printing the driver's diagnostic counters)
 make adf             # bin/openpci-rtl8029.adf: floppy image with driver + tools (needs xdftool)
+make PERF=1          # add per-packet timing counters to the driver (combine with RELEASE=1)
 make RELEASE=1       # -O2, no debug output (default is -O0 -g -DPDEBUG)
 make clean
 
@@ -43,7 +44,7 @@ Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `bin/openpc
 Diagnosing on the real machine:
 
 - The Amiga runs Roadshow with the interface named `RTL8029`. `NetShutdown` stops the network and closes the device (exercising the unit-expunge path); `AddNetInterface RTL8029` brings it back.
-- `s2stat` on the Amiga prints the driver's counters and unit-task state (`S2_GETSPECIALSTATS`, answered in the caller's context so it works even if the unit task hangs). Run it twice a few seconds apart and compare. Besides event counts it shows time per packet for reading, hand-off and transmit (`Ticks*`), the card's own error tallies and collision counts, and `RtlConfig`. It opens the unit with the private `OPENF_MONITOR` flag (query-only), which the driver allows next to Roadshow's exclusive open; the flag value is duplicated in `s2stat.c` and `driver.c`.
+- `s2stat` on the Amiga prints the driver's counters and unit-task state (`S2_GETSPECIALSTATS`, answered in the caller's context so it works even if the unit task hangs). Run it twice a few seconds apart and compare. Besides event counts it shows, in a driver built with `make PERF=1` (off by default, it costs timer reads per packet), time per packet for reading, hand-off and transmit (`Ticks*`) and the worst interrupt-to-service and stack turnaround delays (`MaxTicks*`, `Slow*`); always the card's own error tallies and collision counts, and `RtlConfig`. It opens the unit with the private `OPENF_MONITOR` flag (query-only), which the driver allows next to Roadshow's exclusive open; the flag value is duplicated in `s2stat.c` and `driver.c`.
 - `client <ip> BENCH` adds a 4 MB each-way TCP throughput benchmark with no disk involved (the server needs no option).
 - Setting `RX_VERIFY_CHECKSUMS` to 1 in `driver.c` makes the driver verify IP/ICMP/UDP/TCP checksums of received frames and count pings (`RxSum*`, `RxEchoReq`): use it to tell frames damaged while being read from the card from frames that never arrived.
 - The Amiga can be pinged from the development Mac; a size sweep (`ping -s <n> <amiga-ip>`, frame = n + 42) is a quick deterministic check of frame-size handling. The client/server test did not catch a bug that dropped every frame of 1511+ bytes; the sweep did.

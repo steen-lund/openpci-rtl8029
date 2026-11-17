@@ -12,6 +12,8 @@ XDFTOOL = xdftool
 VERSION = 2.0
 
 RELEASE = 0
+# PERF=1 builds the driver with per-packet timing counters (see PERF_TIMING in driver.c)
+PERF = 0
 
 ifeq ($(RELEASE),1)
 	# The driver links without a C library: stop GCC turning loops into memset/memcpy calls
@@ -22,6 +24,10 @@ else
 	OPTIMIZE = -O0
 	DEBUG    = -g
 	DEFINES  = -DPDEBUG
+endif
+
+ifeq ($(PERF),1)
+	DEFINES += -DPERF_TIMING=1
 endif
 
 INCLUDES = -I. -I./include -I/opt/amiga/m68k-amigaos/ndk-include -I/opt/amiga/m68k-amigaos/include

@@ -195,6 +195,10 @@ enum
     DG_RXERRINTS,     /* times the card flagged a receive error (frame rejected by the card) */
     DG_LASTRXSTATUS,  /* the card's receive status register when it last did */
     DG_INTSEEN,       /* all interrupt status bits ever seen, including ones the driver does not use */
+    DG_MAXTICKSINTLAT, /* PERF: longest time from the card's interrupt to the unit task servicing it */
+    DG_SLOWINTLAT,    /* PERF: times that took more than 2 ms */
+    DG_MAXTICKSTURN,  /* PERF: longest time from handing a frame to the stack to its next write request */
+    DG_SLOWTURN,      /* PERF: times that took more than 5 ms */
     DG_COUNT
 };
 
@@ -213,17 +217,45 @@ static const char *const DiagNames[DG_COUNT] =
     "LastIntStatus", "TaskState", "MMUInhibit", "EClockFreq", "TicksService", "TicksRxRead",
     "TicksRxCopy", "TicksTx", "RxAlignErrors", "RxCrcErrors", "RxMissed", "TxCollisions",
     "TxLateColl", "TxCarrierLost", "RtlConfig", "RxWrapped", "RxSumChecked", "RxSumBad",
-    "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen"
+    "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen",
+    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn"
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
 
-/* Timing of the packet paths, in E-clock ticks (about 1.4 microseconds). Needs a local   */
-/* TimerBase (USE_U(TimerBase)) and 'struct EClockVal perf_t0, perf_t1' in the function.   */
-/* Only the low 32 bits are used: fine for intervals far below an hour.                    */
+/* Timing of the packet paths, in E-clock ticks (about 1.4 microseconds). It costs several */
+/* timer reads per packet, so it is a build option: 'make PERF=1'. Without it the Ticks,    */
+/* MaxTicks and Slow counters stay 0. PERF_VARS goes with a function's declarations. Only   */
+/* the low 32 bits of the E-clock are used: fine for intervals far below an hour.           */
+#ifndef PERF_TIMING
+#define PERF_TIMING 0
+#endif
+
+#if PERF_TIMING
+#define PERF_VARS         struct Library *TimerBase = ud->ud_TimerBase; struct EClockVal perf_t0, perf_t1
 #define PERF_START()      ReadEClock(&perf_t0)
 #define PERF_STOP(n)      (ReadEClock(&perf_t1), DIAG(n) += perf_t1.ev_lo - perf_t0.ev_lo)
 #define PERF_LAP(n)       (PERF_STOP(n), perf_t0 = perf_t1)
+/* Remember when something happened / measure how long ago it was (maximum and count of   */
+/* cases over 'slow' ticks)                                                                */
+#define PERF_STAMP(stamp, flag) \
+    do { struct Library *TimerBase = ud->ud_TimerBase; struct EClockVal perf_now; \
+         ReadEClock(&perf_now); (stamp) = perf_now.ev_lo; (flag) = TRUE; } while (0)
+#define PERF_SINCE(stamp, flag, nmax, nslow, slow) \
+    do { if (flag) { struct Library *TimerBase = ud->ud_TimerBase; struct EClockVal perf_now; ULONG perf_d; \
+         ReadEClock(&perf_now); perf_d = perf_now.ev_lo - (stamp); (flag) = FALSE; \
+         if (perf_d > DIAG(nmax)) DIAG(nmax) = perf_d; \
+         if (perf_d > (slow)) DIAG(nslow)++; } } while (0)
+#else
+#define PERF_VARS         struct EClockVal *perf_unused = NULL
+#define PERF_START()      ((void)perf_unused)
+#define PERF_STOP(n)      ((void)0)
+#define PERF_LAP(n)       ((void)0)
+#define PERF_STAMP(stamp, flag)                    ((void)0)
+#define PERF_SINCE(stamp, flag, nmax, nslow, slow) ((void)0)
+#endif
+#define PERF_TICKS_2MS    1400
+#define PERF_TICKS_5MS    3500
 
 ///
 /// device structures
@@ -264,6 +296,8 @@ struct UnitData
     struct MinList ud_TxQueue;
     struct SignalSemaphore ud_TxSem;
     struct IOSana2Req *ud_PendingWrite;
+    ULONG ud_IntStamp, ud_RxStamp;   /* PERF timing */
+    UBYTE ud_IntStampSet, ud_RxStampSet;
     struct pci_dev* ud_PciDev;
     ULONG ud_OpenCnt;
     ULONG ud_ServiceMask;
@@ -1243,12 +1277,14 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
     DIAG(DG_TXPENDING) = ud->ud_PendingWrite ? 1 : 0;
     DIAG(DG_NEXTPAGE) = ud->ud_NextPage;
     DIAG(DG_MMUINHIBIT) = ud->ud_UseMMUCacheInhibit ? 1 : 0;
+#if PERF_TIMING
     {
         USE_U(TimerBase)
         struct EClockVal now;
 
         DIAG(DG_ECLOCKFREQ) = ReadEClock(&now);
     }
+#endif
 
     rec = (struct Sana2SpecialStatRecord *)(hdr + 1);
     for (i = 0; i < DG_COUNT && i < hdr->RecordCountMax; i++)
@@ -1343,6 +1379,7 @@ LONG IntCode(register struct UnitData *ud reg(a1))
     if (was_masked)
         return 0;
     DIAG(DG_INTERRUPTS)++;
+    PERF_STAMP(ud->ud_IntStamp, ud->ud_IntStampSet);
     return 1;
 }
 
@@ -1810,8 +1847,7 @@ BOOL SendPacket(struct UnitData *ud, struct IOSana2Req *req)
     UBYTE ethbuffer[1536], *datapointer;
     ULONG data_len = req->ios2_DataLength, dma_len;
     UWORD cycles;
-    USE_U(TimerBase)
-    struct EClockVal perf_t0, perf_t1;
+    PERF_VARS;
 
     PERF_START();
 
@@ -2133,17 +2169,22 @@ void StartNextWrite(struct UnitData *ud)
 void ServiceCard(struct UnitData *ud)
 {
     USE_U(SysBase)
-    USE_U(TimerBase)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     struct IOSana2Req *req;
     UBYTE intstatus;
-    struct EClockVal perf_t0, perf_t1, perf_service;
+    PERF_VARS;
+#if PERF_TIMING
+    struct EClockVal perf_service;
+#endif
 
     if (!(ud->ud_Flags & UF_ONLINE))
         return;
 
     DIAG(DG_SERVICERUNS)++;
+    PERF_SINCE(ud->ud_IntStamp, ud->ud_IntStampSet, DG_MAXTICKSINTLAT, DG_SLOWINTLAT, PERF_TICKS_2MS);
+#if PERF_TIMING
     ReadEClock(&perf_service);
+#endif
 
     hw->regs[NE2000_INT_MASK] = 0;
     ud->ud_IntMasked = TRUE;
@@ -2249,6 +2290,7 @@ void ServiceCard(struct UnitData *ud)
                         req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
                     ud->ud_DevStats.PacketsReceived++;
                     DIAG(DG_RXDELIVERED)++;
+                    PERF_STAMP(ud->ud_RxStamp, ud->ud_RxStampSet);
                     IoDone(ud, req, OK, OK);
                 }
                 else
@@ -2275,8 +2317,10 @@ void ServiceCard(struct UnitData *ud)
     DIAG(DG_RXMISSED) += hw->regs[NE2000_CNT_MISSED];
 
     DIAG(DG_TASKSTATE) = TS_PORT;
+#if PERF_TIMING
     ReadEClock(&perf_t1);
     DIAG(DG_TICKSSERVICE) += perf_t1.ev_lo - perf_service.ev_lo;
+#endif
     if (ud->ud_Flags & UF_ONLINE)
     {
         ud->ud_IntMasked = FALSE; /* before the write, see IntCode() */
@@ -2358,6 +2402,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                         break;
                     }
                     DIAG(DG_WRITESQUEUED)++;
+                    PERF_SINCE(ud->ud_RxStamp, ud->ud_RxStampSet, DG_MAXTICKSTURN, DG_SLOWTURN, PERF_TICKS_5MS);
                     ObtainSemaphore(&ud->ud_TxSem);
                     AddTail((struct List *)&ud->ud_TxQueue, (struct Node *)req);
                     ReleaseSemaphore(&ud->ud_TxSem);

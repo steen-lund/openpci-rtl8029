@@ -111,6 +111,10 @@ int main(int argc, char **argv)
                     if (!strcmp(name, "TaskState") && value < sizeof(task_states) / sizeof(task_states[0]))
                         printf("  (%s)", task_states[value]);
 
+                    /* A single duration */
+                    if (!strncmp(name, "MaxTicks", 8) && eclock)
+                        printf("  %lu us", ticks_to_us(value, eclock));
+
                     /* Time counters: total in milliseconds and the average per packet */
                     if (!strncmp(name, "Ticks", 5) && eclock)
                     {
