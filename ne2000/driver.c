@@ -210,7 +210,7 @@ enum
 #define TS_SERVICE   2 /* in ServiceCard() */
 #define TS_RXDRAIN   3 /* reading packets from the ring */
 #define TS_SEND      4 /* in UploadPacket() */
-#define TS_OVERFLOW  5 /* in BufferOverflow() */
+#define TS_OVERFLOW  5 /* in overflow recovery */
 
 static const char *const DiagNames[DG_COUNT] =
 {
@@ -376,7 +376,9 @@ void GetHwAddress(struct UnitData *ud);
 void WriteHwAddress(struct UnitData *ud);
 LONG PacketReceived(struct UnitData *ud);
 LONG RingBufferNotEmpty(struct UnitData *ud);
-void BufferOverflow(struct UnitData *ud);
+BOOL OverflowBegin(struct UnitData *ud);
+void OverflowEnd(struct UnitData *ud, BOOL resend);
+void RingReset(struct UnitData *ud);
 
 struct IOSana2Req *SearchReadRequest(struct UnitData *ud, struct MinList *queue, ULONG type);
 void UnitTask(void);
@@ -1798,11 +1800,20 @@ LONG PacketReceived(struct UnitData *ud)
 ///
 /// BufferOverflow()
 
-void BufferOverflow(struct UnitData *ud)
+/* Recovery from a full receive ring, following the procedure the chip requires: stop it,  */
+/* let it finish, restart it in loopback, take the buffered packets out, then return to    */
+/* normal mode. The packets already in the ring are good and are kept - only what arrives  */
+/* while the ring is full is lost. Unit task only, with the card's interrupts masked.      */
+/*                                                                                         */
+/* OverflowBegin() does the first half and returns TRUE if a transmit was cut off and must */
+/* be started again by OverflowEnd(). In between the caller drains the ring.               */
+
+BOOL OverflowBegin(struct UnitData *ud)
 {
-    struct Library *DOSBase = ud->ud_DOSBase;
     volatile struct Ne2000 *hw = ud->ud_Hardware;
-    UBYTE txp, resent = FALSE, intstatus;
+    BOOL resend = FALSE;
+    UBYTE txp;
+    UWORD wait;
 
     DBG_U("Overflow detected.");
     DIAG(DG_TASKSTATE) = TS_OVERFLOW;
@@ -1811,35 +1822,49 @@ void BufferOverflow(struct UnitData *ud)
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
     hw_write_barrier(hw, ud);
 
-    /* The chip needs up to 1.6 ms to finish a transfer in progress. Called from the unit */
-    /* task only (never from the interrupt server), so Delay() is allowed here.            */
-    Delay(1);
+    /* The chip needs up to 1.6 ms to finish a transfer in progress. A Delay() would be at */
+    /* least 20 ms, during which every incoming packet is lost; register reads take about  */
+    /* 0.6 microseconds each on the bus, so wait with those.                               */
+    for (wait = 3500; wait; wait--)
+        (void)hw->regs[NE2000_INT_STATUS];
 
     hw->regs[NE2000_DMA_COUNTER0] = 0;
     hw->regs[NE2000_DMA_COUNTER1] = 0;
 
-    if (txp)
-    {
-        intstatus = hw->regs[NE2000_INT_STATUS];
-        if (!(intstatus & (INT_TXPACKET | INT_TXERROR)))
-            resent = TRUE;
-    }
+    /* A transmit that was under way and has not reported completion was cut off */
+    if (txp && !(hw->regs[NE2000_INT_STATUS] & (INT_TXPACKET | INT_TXERROR)))
+        resend = TRUE;
 
     hw->regs[NE2000_TX_CONFIG] = TXCFG_LOOP_INT;
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
+    hw_write_barrier(hw, ud);
+    return resend;
+}
+
+void OverflowEnd(struct UnitData *ud, BOOL resend)
+{
+    volatile struct Ne2000 *hw = ud->ud_Hardware;
+
+    hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
+    hw->regs[NE2000_TX_CONFIG] = TXCFG_LOOP_NONE;
+    if (resend)
+        hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_ABORT | COMMAND_TXP;
+    hw_write_barrier(hw, ud);
+}
+
+/* Throws away the ring's contents after a corrupt ring header: the packets in it cannot   */
+/* be found any more. Call between OverflowBegin() and OverflowEnd().                      */
+
+void RingReset(struct UnitData *ud)
+{
+    volatile struct Ne2000 *hw = ud->ud_Hardware;
+
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_START;
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_START;
     hw->regs[NE2000_BOUNDARY] = BUFFER_END - 1;
-    ud->ud_NextPage = RX_BUFFER;
-
-    hw->regs[NE2000_TX_CONFIG] = TXCFG_LOOP_NONE;
-    if (resent)
-        hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START |
-                                   COMMAND_ABORT | COMMAND_TXP;
-    hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
     hw_write_barrier(hw, ud);
-
-    return;
+    ud->ud_NextPage = RX_BUFFER;
 }
 
 ///
@@ -2204,6 +2229,7 @@ void ServiceCard(struct UnitData *ud)
     volatile struct Ne2000 *hw = ud->ud_Hardware;
     struct IOSana2Req *req;
     UBYTE intstatus;
+    BOOL recovering = FALSE, resend = FALSE;
     PERF_VARS;
 #if PERF_TIMING
     struct EClockVal perf_service;
@@ -2289,12 +2315,13 @@ void ServiceCard(struct UnitData *ud)
 
         if (intstatus & INT_OVERFLOW)
         {
-            hw->regs[NE2000_INT_STATUS] = INT_OVERFLOW;
+            /* The ring is full. Stop the card, then empty the ring below and restart */
             DIAG(DG_OVERFLOWS)++;
-            BufferOverflow(ud);
+            resend = OverflowBegin(ud);
+            recovering = TRUE;
         }
 
-        if (intstatus & INT_RXPACKET)
+        if ((intstatus & INT_RXPACKET) || recovering)
         {
             ULONG offset, len;
             UWORD mask;
@@ -2315,7 +2342,12 @@ void ServiceCard(struct UnitData *ud)
                 /* PacketReceived() returns 0 for a corrupt ring header - reset the ring */
                 if (!len)
                 {
-                    BufferOverflow(ud);
+                    if (!recovering)
+                    {
+                        resend = OverflowBegin(ud);
+                        recovering = TRUE;
+                    }
+                    RingReset(ud);
                     break;
                 }
                 DIAG(DG_RXFRAMES)++;
@@ -2348,6 +2380,12 @@ void ServiceCard(struct UnitData *ud)
                 PERF_LAP(DG_TICKSRXCOPY);
             }
             PERF_STOP(DG_TICKSRXREAD); /* the final "ring is empty" check */
+        }
+
+        if (recovering)
+        {
+            OverflowEnd(ud, resend);
+            recovering = FALSE;
         }
 
         /* Keep transmitting while a long receive burst is being drained */
