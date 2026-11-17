@@ -202,6 +202,7 @@ enum
     DG_SLOWINTLAT,    /* PERF: times that took more than 2 ms */
     DG_MAXTICKSTURN,  /* PERF: longest time from handing a frame to the stack to its next write request */
     DG_SLOWTURN,      /* PERF: times that took more than 5 ms */
+    DG_TASKPRI,       /* priority of the unit task */
     DG_COUNT
 };
 
@@ -221,10 +222,15 @@ static const char *const DiagNames[DG_COUNT] =
     "TicksRxCopy", "TicksTx", "RxAlignErrors", "RxCrcErrors", "RxMissed", "TxCollisions",
     "TxLateColl", "TxCarrierLost", "RtlConfig", "RxWrapped", "RxSumChecked", "RxSumBad",
     "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen",
-    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn"
+    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn", "TaskPri"
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
+
+/* Priority of the unit task, which does all packet work. It must get the CPU within a few */
+/* milliseconds of the card's interrupt: the receive ring holds about 10 ms of traffic.    */
+#define UNIT_TASK_PRI      6
+#define UNIT_TASK_PRI_VAR  "openpci-rtl8029.pri"
 
 /* Timing of the packet paths, in E-clock ticks (about 1.4 microseconds). It costs several */
 /* timer reads per packet, so it is a build option: 'make PERF=1'. Without it the Ticks,    */
@@ -874,12 +880,25 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
     USE(SysBase)
     USE(DOSBase)
 
+    LONG pri = UNIT_TASK_PRI;
+    UBYTE buffer[16];
+
     DBG("RunTask() called.");
+
+    /* The priority can be overridden for experiments: SetEnv openpci-rtl8029.pri <n> */
+    if (GetVar(UNIT_TASK_PRI_VAR, buffer, sizeof(buffer), 0) > 0)
+    {
+        LONG value;
+
+        if (StrToLong(buffer, &value) > 0 && value >= -20 && value <= 60)
+            pri = value;
+    }
+    DIAG(DG_TASKPRI) = pri;
 
     if ((ud->ud_Task = (struct Task *)CreateNewProcTags(
             NP_Entry, (LONG)UnitTask,
             NP_Name, (LONG)ud->ud_Name,
-            NP_Priority, 6,
+            NP_Priority, pri,
             NP_StackSize, 16384, /* UploadPacket() keeps a full frame on the stack */
             TAG_END)))
     {
