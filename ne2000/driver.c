@@ -203,6 +203,14 @@ enum
     DG_MAXTICKSTURN,  /* PERF: longest time from handing a frame to the stack to its next write request */
     DG_SLOWTURN,      /* PERF: times that took more than 5 ms */
     DG_TASKPRI,       /* priority of the unit task */
+    DG_TXWIREIDLE,    /* transmits finished with no next frame waiting on the card (wire goes idle) */
+    DG_TXIDLEMSGWAIT, /* ... while requests were already waiting in the unit task's port: the  */
+                      /*     driver, not the stack, was too slow to pick them up              */
+    DG_TICKSTXCOPY,   /* PERF: part of TicksTx in the stack's CopyFromBuff */
+    DG_TICKSTXUPLOAD, /* PERF: part of TicksTx writing the frame to the card */
+    DG_TICKSTXWAIT,   /* PERF: part of TicksTx waiting for the card to report the upload done */
+    DG_TXWAITPOLLS,   /* status reads spent waiting for upload completion, in total */
+    DG_TICKSINTLAT,   /* PERF: total time from the card's interrupt to the unit task servicing it */
     DG_COUNT
 };
 
@@ -222,7 +230,9 @@ static const char *const DiagNames[DG_COUNT] =
     "TicksRxCopy", "TicksTx", "RxAlignErrors", "RxCrcErrors", "RxMissed", "TxCollisions",
     "TxLateColl", "TxCarrierLost", "RtlConfig", "RxWrapped", "RxSumChecked", "RxSumBad",
     "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen",
-    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn", "TaskPri"
+    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn", "TaskPri",
+    "TxWireIdle", "TxIdleMsgWait", "TicksTxCopy", "TicksTxUpload", "TicksTxWait", "TxWaitPolls",
+    "TicksIntLat"
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
@@ -245,6 +255,10 @@ static const char *const DiagNames[DG_COUNT] =
 #define PERF_START()      ReadEClock(&perf_t0)
 #define PERF_STOP(n)      (ReadEClock(&perf_t1), DIAG(n) += perf_t1.ev_lo - perf_t0.ev_lo)
 #define PERF_LAP(n)       (PERF_STOP(n), perf_t0 = perf_t1)
+/* As PERF_LAP, also adding the time to a second (total) counter */
+#define PERF_LAP2(n, total) \
+    do { ULONG perf_d; ReadEClock(&perf_t1); perf_d = perf_t1.ev_lo - perf_t0.ev_lo; \
+         DIAG(n) += perf_d; DIAG(total) += perf_d; perf_t0 = perf_t1; } while (0)
 /* Remember when something happened / measure how long ago it was (maximum and count of   */
 /* cases over 'slow' ticks)                                                                */
 #define PERF_STAMP(stamp, flag) \
@@ -253,6 +267,8 @@ static const char *const DiagNames[DG_COUNT] =
 #define PERF_SINCE(stamp, flag, nmax, nslow, slow) \
     do { if (flag) { struct Library *TimerBase = ud->ud_TimerBase; struct EClockVal perf_now; ULONG perf_d; \
          ReadEClock(&perf_now); perf_d = perf_now.ev_lo - (stamp); (flag) = FALSE; \
+         if (perf_d & 0x80000000UL) perf_d = 0; /* stamp written meanwhile by the other side */ \
+         if ((nmax) == DG_MAXTICKSINTLAT) DIAG(DG_TICKSINTLAT) += perf_d; \
          if (perf_d > DIAG(nmax)) DIAG(nmax) = perf_d; \
          if (perf_d > (slow)) DIAG(nslow)++; } } while (0)
 #else
@@ -260,6 +276,7 @@ static const char *const DiagNames[DG_COUNT] =
 #define PERF_START()      ((void)perf_unused)
 #define PERF_STOP(n)      ((void)0)
 #define PERF_LAP(n)       ((void)0)
+#define PERF_LAP2(n, total) ((void)0)
 #define PERF_STAMP(stamp, flag)                    ((void)0)
 #define PERF_SINCE(stamp, flag, nmax, nslow, slow) ((void)0)
 #endif
@@ -1936,6 +1953,7 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
         IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_BUFF_ERROR);
         return FALSE;
     }
+    PERF_LAP2(DG_TICKSTXCOPY, DG_TICKSTX);
 
     /* Now we need length of data to send to hardware. IORequest ios2_DataLength does not include header   */
     /* length if packet is not RAW. So we sholud add it.                                                   */
@@ -1992,6 +2010,7 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
             hw->DMAPort = *ethdata++;
     }
 #endif
+    PERF_LAP2(DG_TICKSTXUPLOAD, DG_TICKSTX);
 
     /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
 
@@ -2007,9 +2026,10 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
         DIAG(DG_TXDMATIMEOUT)++;
     }
     hw->regs[NE2000_INT_STATUS] = INT_DMAFINISH;
+    DIAG(DG_TXWAITPOLLS) += 10000 - cycles;
+    PERF_LAP2(DG_TICKSTXWAIT, DG_TICKSTX);
 
     ud->ud_TxLen[slot] = data_len;
-    PERF_STOP(DG_TICKSTX);
     return TRUE;
 }
 
@@ -2312,6 +2332,17 @@ void ServiceCard(struct UnitData *ud)
             {
                 TransmitBuffer(ud, ud->ud_TxWaiting);
                 ud->ud_TxWaiting = -1;
+            }
+            else
+            {
+                /* Diagnostics: the wire is idle now. Is a request already waiting in our port */
+                /* (the driver is behind) or has the stack not supplied one? Only the list's    */
+                /* tail pointer is read, a single long: no locking needed for this estimate.    */
+                struct List *msgs = &ud->ud_TaskPort->mp_MsgList;
+
+                DIAG(DG_TXWIREIDLE)++;
+                if (msgs->lh_TailPred != (struct Node *)msgs)
+                    DIAG(DG_TXIDLEMSGWAIT)++;
             }
 
             if (req)

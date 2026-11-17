@@ -3,3 +3,4 @@ obj
 bin
 *.o
 macOS/src/server
+rtl_8029pci.device

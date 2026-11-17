@@ -118,12 +118,14 @@ int main(int argc, char **argv)
                     /* Time counters: total in milliseconds and the average per packet */
                     if (!strncmp(name, "Ticks", 5) && eclock)
                     {
-                        ULONG packets = stat_value(strcmp(name, "TicksTx") ? "RxFrames" : "TxStarted");
+                        BOOL tx = !strncmp(name, "TicksTx", 7);
+                        BOOL intr = !strcmp(name, "TicksIntLat");
+                        ULONG count = stat_value(tx ? "TxStarted" : intr ? "Interrupts" : "RxFrames");
 
                         printf("  %lu ms", ticks_to_us(value, eclock) / 1000);
-                        if (packets)
-                            printf(", %lu us per %s packet", ticks_to_us(value / packets, eclock),
-                                   strcmp(name, "TicksTx") ? "received" : "sent");
+                        if (count)
+                            printf(", %lu us per %s", ticks_to_us(value / count, eclock),
+                                   tx ? "sent packet" : intr ? "interrupt" : "received packet");
                     }
                     printf("\n");
                 }
