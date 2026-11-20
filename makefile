@@ -123,7 +123,7 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
 
 # Floppy image with the driver, its installer and the tools for copying to the real machine. Always built
 # from scratch: replacing files inside an existing image has produced corrupt copies.
-INSTALL_FILES = src/ne2000/Install src/ne2000/$(TARGET).info
+INSTALL_FILES = src/ne2000/Install src/ne2000/Install.info
 
 $(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $(INSTALL_FILES)
 	@mkdir -p $(dir $@)

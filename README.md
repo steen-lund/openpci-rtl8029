@@ -28,8 +28,8 @@ make server          # bin/macOS/server: host side of the network test
 ## Installing
 
 The driver needs `openpci.library` from the openpci package (Aminet
-`driver/other/openpci68k.lha`). Write `dist/openpci-rtl8029.adf` to a floppy (or mount it), then
-from a Shell:
+`driver/other/openpci68k.lha`). Write `dist/openpci-rtl8029.adf` to a floppy (or mount it) and
+double-click the `Install` icon on it. From a Shell, the same is:
 
 ```
 cd OpenPCI:
