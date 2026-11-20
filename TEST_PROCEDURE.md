@@ -7,12 +7,12 @@
 
 3. Build the server (if needed):
    ```bash
-   make -C macOS/src -f Makefile.server
+   make -C src/Tools/macOS -f Makefile.server
    ```
 
 4. Run the server (it will show you its IP addresses):
    ```bash
-   ./macOS/src/server
+   ./src/Tools/macOS/server
    ```
 
 5. Note the IP address shown (example: 192.168.1.100)

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A SANA-II network device driver (`openpci-rtl8029.device`) for RTL8029 (NE2000-compatible) PCI Ethernet cards on classic AmigaOS (m68k), using `openpci.library`. It is a port of Grzegorz Kraszewski's 2001–2002 `prm-rtl8029.device` (Prometheus) driver; history up to 1.3 is in `ne2000/release_notes`. 
+A SANA-II network device driver (`openpci-rtl8029.device`) for RTL8029 (NE2000-compatible) PCI Ethernet cards on classic AmigaOS (m68k), using `openpci.library`. It is a port of Grzegorz Kraszewski's 2001–2002 `prm-rtl8029.device` (Prometheus) driver; history up to 1.3 is in `src/ne2000/release_notes`. 
 
 The repo also contains a TCP client/server pair used to exercise the driver end to end.
 
@@ -22,19 +22,19 @@ make PERF=1          # add per-packet timing counters to the driver (combine wit
 make RELEASE=1       # -O2, no debug output (default is -O0 -g -DPDEBUG)
 make clean
 
-cd macOS/src && make -f Makefile.server   # host-side test server -> macOS/src/server
+cd src/Tools/macOS && make -f Makefile.server   # host-side test server -> src/Tools/macOS/server
 ```
 
 - The build uses `-Wall -Werror`; any warning fails it.
 - `include/` holds third-party headers the toolchain does not ship: the openpci.library SDK (Aminet `driver/other/openpci68k.lha`), mmu.library (MuManual from NDK 3.2) and `devices/sana2.h` (NDK 3.2). `include/proto/*.h` and `include/inline/*.h` are generated — do not hand-edit; regenerate from `include/fd/*.fd` with `fd2sfd <fd> <clib protos> -o x.sfd` then `sfdc --target=m68k-amigaos --mode=macros|proto`.
 - The Amiga-side tools (`client`, `s2stat`) are linked against libnix (`-noixemul`), not the toolchain's default newlib. They run on the shell's default 4 KB stack with no stack swap: their own call chains measure about 1.2 KB at most, so keep large buffers on the heap, not the stack.
-- Driver sources live in `ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
+- Driver sources live in `src/ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
 
 ## Testing
 
 There are no automated tests; nothing can be run on the host except the server. Testing needs real Amiga hardware (or an emulator with an RTL8029) and is manual — see `TEST_PROCEDURE.md`:
 
-1. Run `macOS/src/server` on the host (listens for the Amiga, prints its IPs).
+1. Run `src/Tools/macOS/server` on the host (listens for the Amiga, prints its IPs).
 2. Copy `bin/openpci-rtl8029.device` to `DEVS:Networks/` and `bin/client` to the Amiga, then run `client SERVERIP <ip>`.
 
 The user runs the Amiga side and pastes back results (the `output*.txt` files in the repo root are such captures). After changing the driver, a successful `make` is the only verification available locally — say so rather than claiming a fix works.
@@ -55,7 +55,7 @@ The client and server implement one fixed protocol and must be changed together:
 
 ## Driver architecture
 
-Nearly everything is in `ne2000/driver.c` (sections are delimited by `///` fold markers). `ne2000/header.s` supplies the ROMTag that makes the binary a loadable device; `ne2000/rev.h` holds the version/ID strings (the device name also appears literally in `header.s`). There is no driver header: struct and macro definitions are at the top of `driver.c`.
+Nearly everything is in `src/ne2000/driver.c` (sections are delimited by `///` fold markers). `src/ne2000/header.s` supplies the ROMTag that makes the binary a loadable device; `src/ne2000/rev.h` holds the version/ID strings (the device name also appears literally in `header.s`). There is no driver header: struct and macro definitions are at the top of `driver.c`.
 
 Three execution contexts share a `UnitData`:
 

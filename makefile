@@ -42,13 +42,13 @@ STRIPFLAGS =
 TOOL_CFLAGS  = $(CFLAGS) -noixemul
 TOOL_LDFLAGS = -noixemul
 
-# Add your source files here, do not include "ne2000/" folder name this script will automatically include that
+# Add your source files here, do not include the "src/ne2000/" folder name this script will automatically include that
 SRCS = driver.c __divsi3.c __udivsi3.c header.s
 OBJS = $(addprefix obj/,$(SRCS:%=%.o))
 DEPS = $(OBJS:.o=.d)
 
 # Client source files
-CLIENT_SRCS = AmigaOS/src/client.c
+CLIENT_SRCS = src/Tools/AmigaOS/client.c
 CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
 
 .PHONY: all driver client s2stat adf clean
@@ -60,12 +60,12 @@ adf: bin/$(ADF_TARGET)
 
 -include $(DEPS)
 
-obj/%.c.o: ne2000/%.c
+obj/%.c.o: src/ne2000/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-obj/%.s.o: ne2000/%.s
+obj/%.s.o: src/ne2000/%.s
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -79,7 +79,7 @@ bin/$(CLIENT_TARGET): $(CLIENT_OBJS)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $^ -lm
 
-bin/$(STAT_TARGET): AmigaOS/src/s2stat.o
+bin/$(STAT_TARGET): src/Tools/AmigaOS/s2stat.o
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $^ -lm
 
@@ -98,4 +98,4 @@ bin/$(ADF_TARGET): bin/$(TARGET) bin/$(CLIENT_TARGET) bin/$(STAT_TARGET)
 
 clean:
 	rm -rf bin obj
-	rm -f $(CLIENT_OBJS) AmigaOS/src/s2stat.o
+	rm -f $(CLIENT_OBJS) src/Tools/AmigaOS/s2stat.o

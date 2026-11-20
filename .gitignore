@@ -2,5 +2,5 @@
 obj
 bin
 *.o
-macOS/src/server
+src/Tools/macOS/server
 rtl_8029pci.device
