@@ -357,11 +357,6 @@ struct DevData
     struct Library *dd_MMUBase;  /* optional, see hw_is_cache_inhibited() */
     struct UnitData *dd_Units[4];
     struct timerequest dd_Treq;
-
-#ifdef PDEBUG
-    BPTR debug;
-    UBYTE dpath[128];
-#endif
 };
 
 struct UnitData
@@ -403,9 +398,6 @@ struct UnitData
     UBYTE ud_Unit;       /* unit number, index into dd_Units[] */
     UBYTE ud_IntMasked;  /* card interrupts masked by us; only decides IntCode()'s return value */
     UBYTE ud_RegsUncached;       /* registers mapped cache-inhibited: the barriers do nothing */
-#ifdef PDEBUG
-    BPTR debug;
-#endif
 };
 
 typedef BOOL (*BuffFunc)(register APTR to reg(a0), register APTR from reg(a1), register ULONG n reg(d0));
@@ -583,6 +575,13 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
 
     if ((dd = (struct DevData *)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0)))
     {
+        UBYTE *p;
+
+        /* MakeLibrary() is not documented to clear the base. Everything after the Library */
+        /* structure starts out 0: CloseDeviceLibraries() closes only what was opened.     */
+        for (p = (UBYTE *)&dd->dd_SegList; p < (UBYTE *)(dd + 1); p++)
+            *p = 0;
+
         dd->dd_Lib.lib_Node.ln_Type = NT_DEVICE;
         dd->dd_Lib.lib_Node.ln_Name = romtag.rt_Name;
         dd->dd_Lib.lib_Flags = LIBF_CHANGED | LIBF_SUMUSED;
@@ -594,16 +593,14 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
         dd->dd_SysBase = SysBase;
         if (OpenDeviceLibraries(dd))
         {
-            WORD i;
-
-            for (i = 0; i < 4; i++)
-                dd->dd_Units[i] = NULL;
-
             INIT_DBG1("Device initialized, base at $%08lx.", dd);
             AddDevice((struct Device *)dd);
             return dd;
         }
         CloseDeviceLibraries(dd);
+
+        /* Failing init code must free the base itself (see MakeLibrary()) */
+        FreeMem((UBYTE *)dd - dd->dd_Lib.lib_NegSize, dd->dd_Lib.lib_NegSize + dd->dd_Lib.lib_PosSize);
     }
     return NULL;
 }
@@ -904,6 +901,10 @@ LONG OpenDeviceLibraries(struct DevData *dd)
     {
         dd->dd_TimerBase = (struct Library *)dd->dd_Treq.tr_node.io_Device;
     }
+#if PERF_TIMING
+    if (!dd->dd_TimerBase)
+        return FALSE;   /* the timing counters read the E-clock through it */
+#endif
 
     /* Optional: hw_is_cache_inhibited() asks it how the card's registers are mapped */
     dd->dd_MMUBase = OpenLibrary("mmu.library", 39);
@@ -1154,10 +1155,6 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
         ud->ud_Unit = unit;
         if ((ud->ud_Hardware = FindHardware(dd, unit, ud)))
         {
-#ifdef PDEBUG
-            ud->debug = dd->debug;
-#endif
-
             for (i = 5; i >= 0; i--)
             {
                 ud->ud_SoftAddress[i] = 0x00;
