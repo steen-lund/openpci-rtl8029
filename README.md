@@ -21,7 +21,7 @@ are new. The git history records every change and its date.
 See `CLAUDE.md` for the toolchain and all make targets. In short:
 
 ```bash
-make RELEASE=1 adf   # dist/openpci-rtl8029.adf: driver, test client and s2stat
+make RELEASE=1 dist  # dist/openpci-rtl8029.adf and .lha: installer, driver, client, s2stat
 make server          # bin/macOS/server: host side of the network test
 ```
 
@@ -29,7 +29,8 @@ make server          # bin/macOS/server: host side of the network test
 
 The driver needs `openpci.library` from the openpci package (Aminet
 `driver/other/openpci68k.lha`). Write `dist/openpci-rtl8029.adf` to a floppy (or mount it) and
-double-click the `Install` icon on it. From a Shell, the same is:
+double-click the `Install` icon on it, or unpack `dist/openpci-rtl8029.lha` and use the `Install`
+icon in its `openpci-rtl8029` drawer. From a Shell, the same is:
 
 ```
 cd OpenPCI:

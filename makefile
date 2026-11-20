@@ -7,8 +7,10 @@ TARGET  = openpci-rtl8029.device
 CLIENT_TARGET = client
 STAT_TARGET = s2stat
 ADF_TARGET = openpci-rtl8029.adf
+LHA_TARGET = openpci-rtl8029.lha
 ADF_VOLUME = OpenPCI
 XDFTOOL = xdftool
+LHA     = lha
 VERSION = 2.0
 
 RELEASE = 0
@@ -78,13 +80,15 @@ HOST_CC     = cc
 HOST_CFLAGS = -Wall -Wextra -O2
 SERVER_OBJS = $(HOST_OBJ)/Tools/server.o
 
-.PHONY: all driver client s2stat server adf clean distclean
+.PHONY: all driver client s2stat server adf lha dist clean distclean
 all: $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET)
 driver: $(AMIGA_BIN)/$(TARGET)
 client: $(AMIGA_BIN)/$(CLIENT_TARGET)
 s2stat: $(AMIGA_BIN)/$(STAT_TARGET)
 server: $(HOST_BIN)/server
 adf: $(DIST)/$(ADF_TARGET)
+lha: $(DIST)/$(LHA_TARGET)
+dist: adf lha
 
 -include $(DEPS)
 
@@ -121,21 +125,38 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
-# Floppy image for copying to the real machine: the installer at the root, the driver in
-# Devs/Networks and the tools in C, laid out like the system directories. Always built
-# from scratch: replacing files inside an existing image has produced corrupt copies.
+# Distribution layout, shared by the floppy image and the LhA archive: the installer at the
+# root, the driver in Devs/Networks and the tools in C, like the system directories. It is
+# staged in obj/dist/$(DIST_NAME) and both archives are made from that tree.
+DIST_NAME  = openpci-rtl8029
+STAGE      = obj/dist/$(DIST_NAME)
 INSTALL_FILES = src/ne2000/Install src/ne2000/Install.info
+DIST_INPUTS = $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $(INSTALL_FILES)
 
-$(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $(INSTALL_FILES)
+$(STAGE): $(DIST_INPUTS)
+	rm -rf $@
+	mkdir -p $@/C $@/Devs/Networks
+	cp $(AMIGA_BIN)/$(TARGET) $@/Devs/Networks/
+	cp $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $@/C/
+	cp $(INSTALL_FILES) $@/
+
+# Floppy image (volume $(ADF_VOLUME)) with the staged tree at its root. Always built from
+# scratch: replacing files inside an existing image has produced corrupt copies.
+$(DIST)/$(ADF_TARGET): $(STAGE)
 	@mkdir -p $(dir $@)
 	rm -f $@
 	$(XDFTOOL) $@ format $(ADF_VOLUME) \
-		+ makedir C + makedir Devs + makedir Devs/Networks \
-		+ write $(AMIGA_BIN)/$(TARGET) Devs/Networks/$(TARGET) \
-		+ write $(AMIGA_BIN)/$(CLIENT_TARGET) C/$(CLIENT_TARGET) \
-		+ write $(AMIGA_BIN)/$(STAT_TARGET) C/$(STAT_TARGET) \
-		$(foreach f,$(INSTALL_FILES),+ write $(f))
+		$$(cd $(STAGE) && find . -mindepth 1 -type d | sort | sed 's|^\./|+ makedir |') \
+		$$(cd $(STAGE) && find . -type f | sort | sed 's|^\./\(.*\)|+ write $(STAGE)/\1 \1|')
 	$(XDFTOOL) $@ list
+
+# LhA archive with the staged tree in a $(DIST_NAME) drawer. -lh5 compression and level 1
+# headers, which every Amiga LhA and lha.library version reads.
+$(DIST)/$(LHA_TARGET): $(STAGE)
+	@mkdir -p $(dir $@)
+	rm -f $@
+	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME)
+	$(LHA) -l $@
 
 $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c
 	@mkdir -p $(dir $@)
