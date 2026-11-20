@@ -69,8 +69,10 @@ ifeq ($(filter clean distclean server,$(MAKECMDGOALS)),)
 $(shell mkdir -p $(AMIGA_BIN) && (echo $(CONFIG) | cmp -s - $(CONFIG_STAMP) || echo $(CONFIG) > $(CONFIG_STAMP)))
 endif
 
-# Add your source files here, do not include the "src/ne2000/" folder name this script will automatically include that
-SRCS = driver.c __divsi3.c __udivsi3.c header.s
+# Add your source files here, do not include the "src/ne2000/" folder name this script will automatically include that.
+# header.s must stay first: with -nostdlib the binary starts at the first object's code, and its
+# stub (moveq #-1,d0; rts) makes running the device from a Shell return harmlessly.
+SRCS = header.s driver.c __divsi3.c __udivsi3.c
 OBJS = $(addprefix $(AMIGA_OBJ)/ne2000/,$(SRCS:%=%.o))
 
 CLIENT_OBJS = $(AMIGA_OBJ)/Tools/client.o
