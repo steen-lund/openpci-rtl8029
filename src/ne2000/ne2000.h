@@ -17,7 +17,7 @@
 #ifndef NE2000_H
 #define NE2000_H
 
-/* some register constans */
+/* NE2000/RTL8029 registers and their bits */
 
 #define COMMAND_PAGE0   0x00
 #define COMMAND_PAGE1   0x40

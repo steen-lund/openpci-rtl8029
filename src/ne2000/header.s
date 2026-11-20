@@ -12,13 +12,7 @@
  * README.md and licenses/matay-prm-rtl8029.txt.
  */
 
-/*--------------------------------------------------------------------------*/
-/* Resident header written for openpci-rtl8029.device                    */
-/* $VER: header.s 2.0 (28.09.2024)                                          */
-/* 2.0                                                                      */
-/*     - Renamed to openpci-rtl8029.device                                  */
-/*                                                                          */
-/*--------------------------------------------------------------------------*/
+/* ROMTag (resident structure) that makes the binary a loadable device */
 
 #include "rev.h"
 
@@ -27,7 +21,8 @@
             .global     _IdString
             .global     _CopyB
 
-/* Empty function protecting against running library as executable. */
+/* Start of the binary, as this file is linked first: run from a Shell, the device returns */
+/* -1 and does nothing else.                                                               */
 
             MOVEQ       #-1,d0
             RTS

@@ -12,8 +12,6 @@
  * README.md and licenses/matay-prm-rtl8029.txt.
  */
 
-/* $Id$ */
-
 #define DEV_VERSION     2
 #define DEV_REVISION    0
 #define DEV_NAME        "openpci-rtl8029.device"

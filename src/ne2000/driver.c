@@ -39,7 +39,7 @@
 #include "rev.h"
 #include "ne2000.h"
 
-/* mmu.library for cache-inhibited hardware mapping */
+/* mmu.library, see hw_is_cache_inhibited() */
 struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #include <proto/mmu.h>
 #include <mmu/context.h>
@@ -54,7 +54,7 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 
 /* The RTL8029 accepts 32-bit accesses to its data port, which halves the number of bus    */
 /* cycles per packet (the bus cycles are what packet transfer time consists of). Set to 0  */
-/* to move packet data 16 bits at a time as the original driver did.                       */
+/* to move packet data 16 bits at a time.                                                  */
 #define USE_LONG_DMA 1
 
 /* Frames are kept in memory starting 2 bytes past a longword boundary, so that the data   */
@@ -99,21 +99,13 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define USE(a) struct Library *a = dd->dd_##a;
 #define USE_U(a) struct Library *a = ud->ud_##a;
 
-// Macros for debug messages.
+// Debug output to the serial port, only in a PDEBUG build. Never per packet: serial output
+// takes far longer than a packet.
 
 #if PDEBUG
 
 #define USE_D(a) struct Library* a = dd->dd_##a;
 #define USE_UD(a) struct Library* a = ud->ud_##a;
-/*  #define DBG(a) KPrintf(dd->debug, a "\n")
-  #define DBG_U(a) KPrintf(ud->debug, a "\n")
-  #define DBG_T(a) KPrintf(ud->tdebug, a "\n")
-  #define DBG1(a,b) KPrintf(dd->debug, a "\n",(LONG)b)
-  #define DBG1_U(a,b) KPrintf(ud->debug, a "\n",(LONG)b)
-  #define DBG1_T(a,b) KPrintf(ud->tdebug, a "\n",(LONG)b)
-  #define DBG2(a,b,c) KPrintf(dd->debug, a "\n",(LONG)b,(LONG)c)
-  #define DBG2_U(a,b,c) KPrintf(ud->debug, a "\n",(LONG)b,(LONG)c)
-  #define DBG2_T(a,b,c) KPrintf(ud->tdebug, a "\n",(LONG)b,(LONG)c)*/
 
 #define DBG(a) KPrintF(a "\n")
 #define DBG_NONEWLINE(a) KPrintF(a)
@@ -143,8 +135,7 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define DBG2_T(a, b, c)
 #endif
 
-/* Initialization debug macros - always enabled for important startup messages */
-/* These use KPrintF for serial debug output, independent of PDEBUG setting */
+/* Serial output for one-time initialisation messages, in every build */
 #include <clib/debug_protos.h>
 #define INIT_DBG(a) KPrintF(a "\n")
 #define INIT_DBG1(a,b) KPrintF(a "\n",(LONG)b)
@@ -363,7 +354,7 @@ struct DevData
     struct Library *dd_UtilityBase;
     struct Library *dd_DOSBase;
     struct Library *dd_TimerBase;
-    struct Library *dd_MMUBase;  /* Optional: for cache-inhibited I/O mapping */
+    struct Library *dd_MMUBase;  /* optional, see hw_is_cache_inhibited() */
     struct UnitData *dd_Units[4];
     struct timerequest dd_Treq;
 
@@ -381,7 +372,7 @@ struct UnitData
     struct Library *ud_OpenPciBase;
     struct Library *ud_DOSBase;
     struct Library *ud_TimerBase;
-    struct Library *ud_MMUBase;  /* Optional: for cache-inhibited I/O mapping */
+    struct Library *ud_MMUBase;  /* optional, see hw_is_cache_inhibited() */
     struct Interrupt *ud_Interrupt;
     struct Task *ud_Task;
     struct MsgPort *ud_TaskPort;
@@ -510,7 +501,7 @@ UWORD NSDSupported[] =
 
 ///
 
-/* Good enough */
+/* strcpy() replacement: the driver links without a C library */
 unsigned char *StrCopy(unsigned char *dest, const unsigned char *src)
 {
     unsigned char *d = dest;
@@ -520,43 +511,42 @@ unsigned char *StrCopy(unsigned char *dest, const unsigned char *src)
     return d;
 }
 
-/* Helper function to ensure cache coherency for hardware writes */
+/* Write barrier: make register writes reach the card */
 static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct UnitData *ud)
 {
     struct Library *SysBase;
 
-    /* If MMU library marked hardware as cache-inhibited, no flush needed */
+    /* Nothing to do if the registers are mapped cache-inhibited */
     if (ud->ud_UseMMUCacheInhibit)
         return;
 
-    /* Fallback: Flush data cache to ensure all writes reach hardware immediately */
+    /* Otherwise flush the data cache over the registers */
     SysBase = ud->ud_SysBase;
     if (SysBase) {
         CacheClearE((APTR)hw, sizeof(struct Ne2000), CACRF_ClearD);
     }
 }
 
-/* Read barrier: invalidate cache before reading from hardware */
+/* Read barrier: make register reads come from the card, not the data cache */
 static inline void hw_read_barrier(volatile struct Ne2000 *hw, struct UnitData *ud)
 {
     struct Library *SysBase;
 
-    /* If MMU library marked hardware as cache-inhibited, no flush needed */
+    /* Nothing to do if the registers are mapped cache-inhibited */
     if (ud->ud_UseMMUCacheInhibit)
         return;
 
-    /* Fallback: Invalidate data cache to ensure reads come from hardware */
+    /* Otherwise flush the data cache over the registers */
     SysBase = ud->ud_SysBase;
     if (SysBase) {
         CacheClearE((APTR)hw, sizeof(struct Ne2000), CACRF_ClearD);
     }
 }
 
-/* Finds out whether the card's registers are already mapped cache-inhibited, in which case */
-/* the cache barriers above are unnecessary. The PCI bridge software normally maps PCI      */
-/* space that way. This only asks mmu.library; it does not change the mapping (the earlier   */
-/* attempt to set the property could not work: SetProperties() needs page-aligned ranges     */
-/* and a RebuildTree() to take effect). Without mmu.library the barriers stay in use.        */
+/* Finds out whether the card's registers are mapped cache-inhibited, in which case the     */
+/* cache barriers above are unnecessary. The PCI bridge software normally maps PCI space     */
+/* that way. This only asks mmu.library and never changes the mapping. Without mmu.library  */
+/* the barriers stay in use.                                                                 */
 static BOOL hw_is_cache_inhibited(struct UnitData *ud)
 {
     if (ud->ud_MMUBase)
@@ -608,13 +598,6 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
 
             for (i = 0; i < 4; i++)
                 dd->dd_Units[i] = NULL;
-
-#ifdef PDEBUG
-/*USE_D(DOSBase)*/
-/*StrCopy(dd->dpath, "KCON:0/17/400/300/openpci-rtl8029.device (main)/AUTO/CLOSE/WAIT");*/
-/*GetVar("PrometheusDebug", dd->dpath, 128, 0);*/
-/*dd->debug = Open(dd->dpath, MODE_NEWFILE);*/
-#endif
 
             INIT_DBG1("Device initialized, base at $%08lx.", dd);
             AddDevice((struct Device *)dd);
@@ -754,7 +737,6 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         break;
 
     case CMD_READ:
-        /* DBG1("CMD_READ [$%08lx].", (LONG)req); */
         if (!req->ios2_BufferManagement)
         {
             /* Query-only (OPENF_MONITOR) opener */
@@ -776,7 +758,6 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         for (i = 0; i < ETHER_ADDR_LEN; i++)
             req->ios2_DstAddr[i] = 0xFF;
     case CMD_WRITE:
-        /* DBG1("CMD_WRITE [$%08lx].", (LONG)req); */
         if (!req->ios2_BufferManagement)
         {
             /* Query-only (OPENF_MONITOR) opener */
@@ -812,7 +793,6 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         break;
 
     case CMD_FLUSH:
-        /* DBG1("CMD_FLUSH [$%08lx].", (LONG)req); */
         req->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(ud->ud_TaskPort, &req->ios2_Req.io_Message);
         break;
@@ -925,11 +905,11 @@ LONG OpenDeviceLibraries(struct DevData *dd)
         dd->dd_TimerBase = (struct Library *)dd->dd_Treq.tr_node.io_Device;
     }
 
-    /* Try to open mmu.library - optional, for cache-inhibited hardware mapping */
+    /* Optional: hw_is_cache_inhibited() asks it how the card's registers are mapped */
     dd->dd_MMUBase = OpenLibrary("mmu.library", 39);
     if (dd->dd_MMUBase)
     {
-        INIT_DBG("mmu.library opened - will use cache-inhibited I/O mapping");
+        INIT_DBG("mmu.library opened");
     }
     else
     {
@@ -1053,8 +1033,7 @@ LONG RunTask(struct DevData *dd, struct UnitData *ud)
 /* Tells the unit task to quit and waits until it has. The task replies the unit message   */
 /* as its last action. The reply port is created here, by the task that is closing the     */
 /* unit: a message port only wakes the task that created it, and the unit is not           */
-/* necessarily closed by the task that opened it (waiting on a port made at open time left */
-/* the closing task asleep forever, and signalled the opener, which may be long gone).     */
+/* necessarily closed by the task that opened it (Roadshow's NetShutdown is not).          */
 
 void KillTask(struct DevData *dd, struct UnitData *ud)
 {
@@ -1139,13 +1118,10 @@ struct UnitData *OpenUnit(struct DevData *dd, LONG unit, LONG flags)
     if (flags & SANA2OPF_MINE)
         ud->ud_Flags |= UF_EXCLUSIVE;
 
-    /* Set promiscuous flag if requested - we konw here MINE was requested too, and noone else has opened */
-    /* the unit. So we can just set it if requested. */
+    /* Promiscuous implies exclusive (checked above), so nobody else has the unit open */
 
     if (flags & SANA2OPF_PROM)
         ud->ud_Flags |= UF_PROMISCUOUS;
-
-    /* OK, increment open counter and exit with success. */
 
     ud->ud_OpenCnt++;
     DBG2("%s opened [%ld].", ud->ud_Name, ud->ud_OpenCnt);
@@ -1475,8 +1451,7 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
     else
         error = IOERR_BADLENGTH;
 
-    /* I don't use IoDone() here, because it writes to ios2_WireError */
-    /* but this request can be simple IOStdReq one.                   */
+    /* Not IoDone(): it writes ios2_WireError, and this may be a plain IOStdReq */
 
     req->io_Error = error;
     if (!(req->io_Flags & IOF_QUICK))
@@ -1626,7 +1601,7 @@ void HardwareInit(struct UnitData *ud)
 {
     volatile struct Ne2000 *hw = ud->ud_Hardware;
 
-    hw->regs[NE2000_COMMAND] = 0x21; // COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
     hw->regs[NE2000_DATA_CONFIG] = DTCFG_FIFO_8 | DTCFG_WIDE | DTCFG_LOOPSEL;
     hw->regs[NE2000_DMA_COUNTER0] = 0;
     hw->regs[NE2000_DMA_COUNTER1] = 0;
@@ -1636,9 +1611,9 @@ void HardwareInit(struct UnitData *ud)
     hw->regs[NE2000_BOUNDARY] = BUFFER_END - 1;
     hw->regs[NE2000_INT_STATUS] = 0xFF;
     hw->regs[NE2000_INT_MASK] = 0x00;
-    hw->regs[NE2000_COMMAND] = 0x61; // COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP;
     hw->regs[NE2000_CURRENT_PAGE] = RX_BUFFER;
-    hw->regs[NE2000_COMMAND] = 0x21;
+    hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_ABORT | COMMAND_STOP;
     hw_write_barrier(hw, ud);  /* Ensure hardware init registers reach hardware */
     return;
 }
@@ -1750,27 +1725,17 @@ ULONG GetPacketHeader(volatile struct Ne2000 *ne, UBYTE page, struct UnitData *u
     /* Minimal barrier: ensure DMA command reaches hardware */
     hw_write_barrier(ne, ud);
 
-    /* Read two 16-bit words from DMAPort
-     * The NE2000 packet header in memory is 4 bytes:
-     *   Byte 0: Receive Status
-     *   Byte 1: Next Page Pointer
-     *   Byte 2: Length Low
-     *   Byte 3: Length High
-     *
-     * DMAPort reads 16-bit words. On big-endian Amiga reading little-endian data:
-     * First word contains bytes 1,0 (in big-endian word format: byte1 in high, byte0 in low)
-     * Second word contains bytes 3,2
-     */
-    w0 = ne->DMAPort;  // Contains status and next_page
-    w1 = ne->DMAPort;  // Contains length
+    /* The 4-byte ring header: receive status, next page, byte count low, byte count high. */
+    /* Each 16-bit word read from DMAPort has the card's first byte in its high half.      */
+    w0 = ne->DMAPort;               /* status, next page */
+    w1 = ne->DMAPort;               /* count low, count high */
 
-    /* Extract bytes - the words are already byte-swapped by hardware */
-    status = (w0 >> 8) & 0xFF;      // High byte of first word
-    next_page = w0 & 0xFF;          // Low byte of first word
-    len_lo = (w1 >> 8) & 0xFF;      // High byte of second word
-    len_hi = w1 & 0xFF;             // Low byte of second word
+    status = (w0 >> 8) & 0xFF;
+    next_page = w0 & 0xFF;
+    len_lo = (w1 >> 8) & 0xFF;
+    len_hi = w1 & 0xFF;
 
-    /* Pack into result with proper layout for our code */
+    /* Returned as status | next page << 8 | count low << 16 | count high << 24 */
     result = ((ULONG)status) | ((ULONG)next_page << 8) | ((ULONG)len_lo << 16) | ((ULONG)len_hi << 24);
 
     return result;
@@ -1826,11 +1791,10 @@ void GetPacket(volatile struct Ne2000 *ne, UBYTE startpage, UWORD len, UWORD *bu
 /* Reads the next packet from the ring into ud_RxBuffer. Returns the frame length (Ethernet */
 /* header + data, without the CRC), or 0 if the ring header is corrupt (nothing is read      */
 /* then; the caller must reset the ring).                                                    */
-/* No debug output per packet: serial output takes far longer than a packet.                 */
 
-/* The byte count in the ring header is 4 more than the Ethernet frame (header + data).   */
-/* Passing those 4 bytes on made a full sized frame look longer than the MTU to the TCP/IP  */
-/* stack, which then dropped it: frames of 1511 bytes and more never got through.            */
+/* The byte count in the ring header is 4 more than the Ethernet frame (header + data).    */
+/* They must not be passed on: a full-sized frame would exceed the MTU and the TCP/IP stack */
+/* would drop it.                                                                            */
 #define RING_OVERHEAD   4
 
 /* Diagnostic: verify the IPv4 header checksum and the ICMP/UDP/TCP checksum of a received */
@@ -1917,8 +1881,8 @@ LONG PacketReceived(struct UnitData *ud)
     next_page = (header >> 8) & 0xFF;
     count = ((header >> 16) & 0xFF) | (((header >> 24) & 0xFF) << 8);
 
-    /* Validate BEFORE reading: the length is used as DMA count into ud_RxBuffer, which */
-    /* only holds one maximum sized frame.                                             */
+    /* Checked before reading: the count is used as the DMA count into ud_RxBuffer, which */
+    /* only holds one full-sized frame.                                                  */
     if (next_page < RX_BUFFER || next_page >= BUFFER_END || count < RING_COUNT_MIN || count > RING_COUNT_MAX)
     {
         DBG1_U("Corrupt ring header $%08lx, resetting ring buffer", header);
@@ -2040,9 +2004,8 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
         return FALSE;
     }
 
-    /* If not raw packets, fill in Dst, Src and Type fields of Ethernet frame. 'datapointer' is a vairable */
-    /* holding address of data to copy from network stack. If packet is raw, datapointer points to start   */
-    /* of ethbuffer, otherwise points to ef_Data field (first byte after Ethernet header.                  */
+    /* A raw packet brings its own Ethernet header; otherwise build it, and the stack's data */
+    /* goes after it.                                                                         */
 
     if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
     {
@@ -2056,8 +2019,6 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     else
         datapointer = ethbuffer;
 
-    /* Copy data from network stack using supplied CopyFrom() function. */
-
     if (!((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyFrom(datapointer, req->ios2_Data, data_len))
     {
         IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_BUFF_ERROR);
@@ -2065,23 +2026,18 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     }
     PERF_LAP2(DG_TICKSTXCOPY, DG_TICKSTX);
 
-    /* Now we need length of data to send to hardware. IORequest ios2_DataLength does not include header   */
-    /* length if packet is not RAW. So we sholud add it.                                                   */
+    /* ios2_DataLength does not count the header unless the packet is raw */
 
     if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
         data_len += ETHER_HDR_LEN;
 
-    /* Packet sent to Ethernet hardware should be at least 60 bytes long (4 bytes of CRC will be appended  */
-    /* by hardware giving 64 bytes). If our packet is shorter we should extend it with zeros.             */
+    /* Pad to the shortest frame; the card appends the 4-byte CRC */
 
     while (data_len < ETHER_MIN_FRAME)
         ethbuffer[data_len++] = 0;
 
-    /* Now the packet is ready to send it to NIC buffer. It is done by Remote Write DMA command. Firstly   */
-    /* write addres and counter should be initialized, then command register.                              */
-
-    /* Receive uses the same remote DMA channel. Both run in the unit task only, so they     */
-    /* cannot interleave.                                                                     */
+    /* Upload through remote write DMA. Receive uses the same DMA channel; both run in the */
+    /* unit task only, so they cannot interleave.                                          */
 
     /* The data port is 16 bits wide, so the remote DMA count must be even: with an odd     */
     /* count the chip's byte counter steps past zero and INT_DMAFINISH never comes. Upload    */
@@ -2100,8 +2056,6 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     hw->regs[NE2000_DMA_START_ADDR1] = TX_BUFFER + slot * TX_PAGES;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_START | COMMAND_WRITE;
     hw_write_barrier(hw, ud);  /* Ensure DMA setup reaches hardware before data transfer */
-
-    /* Now we can send packet data to DMAPort word by word.                                                */
 
 #if USE_LONG_DMA
     {
@@ -2132,9 +2086,7 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
 #endif
     PERF_LAP2(DG_TICKSTXUPLOAD, DG_TICKSTX);
 
-    /* Wait for DMA to complete by checking INT_DMAFINISH flag.                                            */
-
-    /* Bounded: never spin forever if the flag does not show up.                               */
+    /* Wait for the card to report the upload complete, but not forever */
 
     for (cycles = 10000; cycles && !(hw->regs[NE2000_INT_STATUS] & INT_DMAFINISH); cycles--)
     {
@@ -2593,7 +2545,6 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
     sigmask = 1 << port->mp_SigBit;
     for (;;)
     {
-        /* DBG_T("Waiting..."); */
         DIAG(DG_TASKSTATE) = TS_WAITING;
         signals = Wait(SIGBREAKF_CTRL_C | sigmask | ud->ud_ServiceMask);
         DIAG(DG_TASKSTATE) = TS_PORT;
@@ -2620,7 +2571,6 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
         {
             struct IOSana2Req *req;
 
-            /* DBG_T("port"); */
             while ((req = (struct IOSana2Req *)GetMsg(port)))
             {
                 switch (req->ios2_Req.io_Command)
