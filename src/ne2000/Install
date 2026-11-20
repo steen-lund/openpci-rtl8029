@@ -72,7 +72,7 @@
             	(prompt #msg_copydrv)
                (help #msg_copydrv)
                (confirm)
-               (source "openpci-rtl8029.device")
+               (source "Devs/Networks/openpci-rtl8029.device")
                (dest #destpath)
             )
        	)

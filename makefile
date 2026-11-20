@@ -121,7 +121,8 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
-# Floppy image with the driver, its installer and the tools for copying to the real machine. Always built
+# Floppy image for copying to the real machine: the installer at the root, the driver in
+# Devs/Networks and the tools in C, laid out like the system directories. Always built
 # from scratch: replacing files inside an existing image has produced corrupt copies.
 INSTALL_FILES = src/ne2000/Install src/ne2000/Install.info
 
@@ -129,10 +130,11 @@ $(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AM
 	@mkdir -p $(dir $@)
 	rm -f $@
 	$(XDFTOOL) $@ format $(ADF_VOLUME) \
-		+ write $(AMIGA_BIN)/$(TARGET) \
-		$(foreach f,$(INSTALL_FILES),+ write $(f)) \
-		+ write $(AMIGA_BIN)/$(CLIENT_TARGET) \
-		+ write $(AMIGA_BIN)/$(STAT_TARGET)
+		+ makedir C + makedir Devs + makedir Devs/Networks \
+		+ write $(AMIGA_BIN)/$(TARGET) Devs/Networks/$(TARGET) \
+		+ write $(AMIGA_BIN)/$(CLIENT_TARGET) C/$(CLIENT_TARGET) \
+		+ write $(AMIGA_BIN)/$(STAT_TARGET) C/$(STAT_TARGET) \
+		$(foreach f,$(INSTALL_FILES),+ write $(f))
 	$(XDFTOOL) $@ list
 
 $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c
