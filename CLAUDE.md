@@ -12,12 +12,12 @@ Licensing (details in `README.md`): the driver in `src/ne2000/` is GPL-2.0-or-la
 
 ## Build
 
-Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (path is hard-coded in `makefile` as `TOOLPREFIX`).
+Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (path is hard-coded in `makefile` as `TOOLPREFIX`). The toolchain is built from AmigaPorts/m68k-amigaos-gcc (https://github.com/AmigaPorts/m68k-amigaos-gcc).
 
 The distribution targets need two more host tools:
 
 - `xdftool` (`make adf`) from amitools, installed with pip (`pip3 install amitools`); the makefile runs it from `PATH`.
-- LHa for UNIX (`make lha`), which comes with the Amiga toolchain as `/opt/amiga/bin/lha`; the makefile uses that path directly. Homebrew's `lhasa` formula also installs an `lha` command, but it can only list and extract, not create archives, so it cannot replace it (it is fine for checking an archive).
+- LHa for UNIX (`make lha`). The toolchain build compiles it from AmigaPorts/lha and installs it as `/opt/amiga/bin/lha`; the makefile uses that path directly. Homebrew's `lhasa` formula also installs an `lha` command, but it can only list and extract, not create archives, so it cannot replace it (it is fine for checking an archive).
 
 ```bash
 make                 # driver + Amiga tools (debug build) -> bin/AmigaOS/
