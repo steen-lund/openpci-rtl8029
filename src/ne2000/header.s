@@ -32,7 +32,7 @@
 _romtag:    .short      0x4AFC
             .long       _romtag
             .long       _tagend
-            .byte       0,1,3,0
+            .byte       0,DEV_VERSION,3,0       /* flags (no autoinit), version, NT_DEVICE, priority */
             .long       _devname
             .long       _IdString
             .long       _DevInit

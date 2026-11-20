@@ -110,10 +110,11 @@ $(AMIGA_OBJ)/ne2000/%.c.o: src/ne2000/%.c $(THIS_MAKEFILE)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# Assembler sources go through the C preprocessor too, for #include "rev.h"
 $(AMIGA_OBJ)/ne2000/%.s.o: src/ne2000/%.s $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
-	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) -x assembler-with-cpp $<
+	$(CC) $(CFLAGS) -x assembler-with-cpp -c -o $@ $<
 
 $(AMIGA_OBJ)/Tools/%.o: src/Tools/AmigaOS/%.c $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
