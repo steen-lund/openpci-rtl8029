@@ -17,8 +17,8 @@
 
 #include <exec/types.h>
 
-#ifndef PRMNE2000_NE2000_H
-#define PRMNE2000_NE2000_H
+#ifndef NE2000_H
+#define NE2000_H
 
 /* some register constans */
 
@@ -116,12 +116,29 @@ struct Ne2000
  };
 
 
+/* Ethernet and IP. BSD names where they exist (netinet/if_ether.h is not usable here: it  */
+/* pulls in the socket API). Frame sizes exclude the 4-byte CRC, which the card adds and    */
+/* strips; BSD's ETHER_MIN_LEN/ETHER_MAX_LEN (64/1518) include it, hence different names.   */
+
+#define ETHER_ADDR_LEN   6                                /* bytes in a station address */
+#define ETHER_HDR_LEN    (2 * ETHER_ADDR_LEN + 2)         /* destination, source, type  */
+#define ETHERMTU         1500                             /* longest payload            */
+#define ETHER_MIN_FRAME  60                               /* shortest frame on the wire */
+#define ETHER_MAX_FRAME  (ETHER_HDR_LEN + ETHERMTU)       /* longest frame: 1514        */
+#define ETHERTYPE_IP     0x0800
+
+#define IP_MIN_HDR_LEN   20                               /* IPv4 header without options */
+#define IPPROTO_ICMP     1
+#define IPPROTO_TCP      6
+#define IPPROTO_UDP      17
+#define ICMP_ECHO        8                                /* echo request (ping)        */
+
 struct EthFrame
  {
-  UBYTE ef_DestAddr[6];
-  UBYTE ef_SrcAddr[6];
+  UBYTE ef_DestAddr[ETHER_ADDR_LEN];
+  UBYTE ef_SrcAddr[ETHER_ADDR_LEN];
   UWORD ef_Type;
-  UBYTE ef_Data[46];       /* shortest possible */
+  UBYTE ef_Data[ETHER_MIN_FRAME - ETHER_HDR_LEN];   /* shortest possible */
  };
 
 #endif

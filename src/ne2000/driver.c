@@ -69,6 +69,12 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define FRAME_START(space) ((UBYTE *)((((ULONG)(space)) + 3) & ~3UL) + FRAME_ALIGN)
 #define DMAPORT_LONG(ne) ((ne)->DMAPortLong)
 
+/* Word offsets into a received frame in ud_RxBuffer, which is indexed in 16-bit words */
+#define RXW_DST   0                          /* destination address */
+#define RXW_SRC   (ETHER_ADDR_LEN / 2)       /* source address      */
+#define RXW_TYPE  (2 * ETHER_ADDR_LEN / 2)   /* EtherType           */
+#define RXW_DATA  (ETHER_HDR_LEN / 2)        /* payload             */
+
 /* PCI card ID's */
 
 #define PCI_VENDOR_REALTEK 0x10EC
@@ -333,9 +339,10 @@ struct UnitData
     ULONG ud_ServiceMask;
     ULONG ud_RxSpace[386];   /* storage for ud_RxBuffer (1536 bytes + alignment) */
     UWORD *ud_RxBuffer;      /* one received frame, 2 bytes into ud_RxSpace: see FRAME_ALIGN */
+                             /* and RXW_* for its word offsets                               */
     UBYTE ud_Name[27];
-    UBYTE ud_EtherAddress[6];
-    UBYTE ud_SoftAddress[6];
+    UBYTE ud_EtherAddress[ETHER_ADDR_LEN];
+    UBYTE ud_SoftAddress[ETHER_ADDR_LEN];
     struct Sana2DeviceStats ud_DevStats;
     ULONG ud_Diag[DG_COUNT];
     UBYTE ud_Flags;
@@ -705,7 +712,7 @@ void DevBeginIO(register struct IOSana2Req *req reg(a1), register struct DevData
         break;
 
     case S2_BROADCAST:
-        for (i = 0; i < 6; i++)
+        for (i = 0; i < ETHER_ADDR_LEN; i++)
             req->ios2_DstAddr[i] = 0xFF;
     case CMD_WRITE:
         /* DBG1("CMD_WRITE [$%08lx].", (LONG)req); */
@@ -1199,10 +1206,10 @@ void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
         query->DeviceLevel = 0;
 
         if(query->SizeAvailable >= 18)
-            query->AddrFieldSize = 48;
+            query->AddrFieldSize = ETHER_ADDR_LEN * 8;
 
         if (query->SizeAvailable >= 22)
-            query->MTU = 1500;
+            query->MTU = ETHERMTU;
 
         if (query->SizeAvailable >= 26)
             query->BPS = 10000000;
@@ -1230,8 +1237,8 @@ void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
     USE_U(SysBase)
 
     DBG_U("S2_GETSTATIONADDRESS.");
-    CopyMem(ud->ud_SoftAddress, req->ios2_SrcAddr, 6);
-    CopyMem(ud->ud_EtherAddress, req->ios2_DstAddr, 6);
+    CopyMem(ud->ud_SoftAddress, req->ios2_SrcAddr, ETHER_ADDR_LEN);
+    CopyMem(ud->ud_EtherAddress, req->ios2_DstAddr, ETHER_ADDR_LEN);
     IoDone(ud, req, OK, OK);
     return;
 }
@@ -1294,7 +1301,7 @@ void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
     {
         /* Not configured means not online either: S2_ONLINE requires configuration.     */
         /* GoOnline() resets the card and programs the new address.                      */
-        CopyMem(req->ios2_SrcAddr, ud->ud_SoftAddress, 6);
+        CopyMem(req->ios2_SrcAddr, ud->ud_SoftAddress, ETHER_ADDR_LEN);
         if (GoOnline(ud))
         {
             ud->ud_Flags |= UF_ONLINE | UF_CONFIGURED;
@@ -1791,17 +1798,17 @@ static UWORD fold_sum(ULONG sum)
 
 static void VerifyChecksums(struct UnitData *ud, ULONG len, UBYTE startpage, BOOL wrapped)
 {
-    const UWORD *ip = &ud->ud_RxBuffer[7];   /* after the 14 byte Ethernet header */
+    const UWORD *ip = &ud->ud_RxBuffer[RXW_DATA];
     ULONG ihl, total, tlen, sum;
     UBYTE proto;
     BOOL bad;
 
-    if (ud->ud_RxBuffer[6] != 0x0800 || len < 14 + 20 || (ip[0] >> 12) != 4)
+    if (ud->ud_RxBuffer[RXW_TYPE] != ETHERTYPE_IP || len < ETHER_HDR_LEN + IP_MIN_HDR_LEN || (ip[0] >> 12) != 4)
         return;
 
     ihl = ((ip[0] >> 8) & 0x0F) * 4;
     total = ip[1];
-    if (ihl < 20 || total < ihl || total > len - 14)
+    if (ihl < IP_MIN_HDR_LEN || total < ihl || total > len - ETHER_HDR_LEN)
         return;
 
     DIAG(DG_RXSUMCHECKED)++;
@@ -1814,13 +1821,13 @@ static void VerifyChecksums(struct UnitData *ud, ULONG len, UBYTE startpage, BOO
     {
         const UWORD *tp = ip + ihl / 2;
 
-        if (proto == 1)                                        /* ICMP */
+        if (proto == IPPROTO_ICMP)
         {
             bad = fold_sum(sum_words(tp, tlen, 0)) != 0xFFFF;
-            if (!bad && (tp[0] >> 8) == 8)
+            if (!bad && (tp[0] >> 8) == ICMP_ECHO)
                 DIAG(DG_RXECHOREQ)++;
         }
-        else if (proto == 6 || (proto == 17 && tlen >= 8 && tp[3] != 0))   /* TCP, UDP with checksum */
+        else if (proto == IPPROTO_TCP || (proto == IPPROTO_UDP && tlen >= 8 && tp[3] != 0))   /* UDP: if it has a checksum */
         {
             sum = sum_words(&ip[6], 8, proto + tlen);          /* pseudo header: addresses, protocol, length */
             bad = fold_sum(sum_words(tp, tlen, sum)) != 0xFFFF;
@@ -1836,8 +1843,8 @@ static void VerifyChecksums(struct UnitData *ud, ULONG len, UBYTE startpage, BOO
     }
 }
 #endif
-#define RING_COUNT_MIN  (60 + RING_OVERHEAD)    /* shortest frame the card accepts */
-#define RING_COUNT_MAX  (1514 + RING_OVERHEAD)  /* longest Ethernet frame */
+#define RING_COUNT_MIN  (ETHER_MIN_FRAME + RING_OVERHEAD)    /* shortest frame the card accepts */
+#define RING_COUNT_MAX  (ETHER_MAX_FRAME + RING_OVERHEAD)    /* longest Ethernet frame */
 
 LONG PacketReceived(struct UnitData *ud)
 {
@@ -1966,7 +1973,7 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     /* ethbuffer holds one frame: refuse anything longer than the MTU (plus the Ethernet    */
     /* header for raw packets, which carry their own).                                      */
 
-    if (data_len > ((req->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1514 : 1500))
+    if (data_len > ((req->ios2_Req.io_Flags & SANA2IOF_RAW) ? ETHER_MAX_FRAME : ETHERMTU))
     {
         IoDone(ud, req, S2ERR_MTU_EXCEEDED, S2WERR_GENERIC_ERROR);
         return FALSE;
@@ -1980,8 +1987,8 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     {
         struct EthFrame *ef = (struct EthFrame *)ethbuffer;
 
-        CopyMem(req->ios2_DstAddr, ef->ef_DestAddr, 6);
-        CopyMem(ud->ud_SoftAddress, ef->ef_SrcAddr, 6);  /* the configured address, as the card filters on */
+        CopyMem(req->ios2_DstAddr, ef->ef_DestAddr, ETHER_ADDR_LEN);
+        CopyMem(ud->ud_SoftAddress, ef->ef_SrcAddr, ETHER_ADDR_LEN);  /* the configured address, as the card filters on */
         ef->ef_Type = req->ios2_PacketType;
         datapointer = ef->ef_Data;
     }
@@ -2001,12 +2008,12 @@ BOOL UploadPacket(struct UnitData *ud, struct IOSana2Req *req, WORD slot)
     /* length if packet is not RAW. So we sholud add it.                                                   */
 
     if (!(req->ios2_Req.io_Flags & SANA2IOF_RAW))
-        data_len += 14;
+        data_len += ETHER_HDR_LEN;
 
     /* Packet sent to Ethernet hardware should be at least 60 bytes long (4 bytes of CRC will be appended  */
     /* by hardware giving 64 bytes). If our packet is shorter we should extend it with zeros.             */
 
-    while (data_len < 60)
+    while (data_len < ETHER_MIN_FRAME)
         ethbuffer[data_len++] = 0;
 
     /* Now the packet is ready to send it to NIC buffer. It is done by Remote Write DMA command. Firstly   */
@@ -2115,12 +2122,12 @@ void GetHwAddress(struct UnitData *ud)
     hw->regs[NE2000_DMA_START_ADDR0] = 0;
     hw->regs[NE2000_DMA_START_ADDR1] = 0;
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE0 | COMMAND_READ;
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
         ud->ud_EtherAddress[i] = hw->DMAPort;
 
     /* Always display hardware address on initialization */
     INIT_DBG_U("Hardware address (read):");
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
         INIT_DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
 
     return;
@@ -2136,12 +2143,12 @@ void WriteHwAddress(struct UnitData *ud)
 
 #ifdef PDEBUG
     DBG_U("\thardware address (write):");
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
         DBG1_U("\t%02lx", ud->ud_SoftAddress[i]);
 #endif
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP;
-    for (i = 0; i < 6; i++)
+    for (i = 0; i < ETHER_ADDR_LEN; i++)
     {
         hw->regs[NE2000_PHYSICAL_ADDR0 + i] = ud->ud_SoftAddress[i];
     }
@@ -2452,18 +2459,18 @@ void ServiceCard(struct UnitData *ud)
                 }
                 DIAG(DG_RXFRAMES)++;
 
-                if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[6])))
+                if ((req = SearchReadRequest(ud, &ud->ud_RxQueue, ud->ud_RxBuffer[RXW_TYPE])))
                 {
                     if (req->ios2_Req.io_Flags & SANA2IOF_RAW)
                         offset = 0;
                     else
-                        offset = 7;
+                        offset = RXW_DATA;
                     ((struct BuffFunctions *)req->ios2_BufferManagement)->bf_CopyTo(req->ios2_Data, &ud->ud_RxBuffer[offset], len - (offset << 1));
-                    CopyMem(&ud->ud_RxBuffer[0], req->ios2_DstAddr, 6);
-                    CopyMem(&ud->ud_RxBuffer[3], req->ios2_SrcAddr, 6);
+                    CopyMem(&ud->ud_RxBuffer[RXW_DST], req->ios2_DstAddr, ETHER_ADDR_LEN);
+                    CopyMem(&ud->ud_RxBuffer[RXW_SRC], req->ios2_SrcAddr, ETHER_ADDR_LEN);
                     req->ios2_DataLength = len - (offset << 1);
                     mask = 0xFFFF;
-                    for (i = 2; i >= 0; i--)
+                    for (i = RXW_SRC - 1; i >= RXW_DST; i--)     /* all-ones destination */
                         mask &= ud->ud_RxBuffer[i];
                     if (mask == 0xFFFF)
                         req->ios2_Req.io_Flags |= SANA2IOF_BCAST;
@@ -2475,7 +2482,7 @@ void ServiceCard(struct UnitData *ud)
                 else
                 {
                     DIAG(DG_RXNOREADER)++;
-                    DIAG(DG_LASTDROPTYPE) = ud->ud_RxBuffer[6];
+                    DIAG(DG_LASTDROPTYPE) = ud->ud_RxBuffer[RXW_TYPE];
                 }
                 PERF_LAP(DG_TICKSRXCOPY);
             }
