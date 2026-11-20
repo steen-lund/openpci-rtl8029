@@ -1,4 +1,8 @@
 TOOLPREFIX = /opt/amiga/bin/m68k-amigaos-
+
+# Everything built depends on this file: flags, link order and the distribution layout are
+# defined here, and make does not notice a changed command on its own.
+THIS_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 CC    = $(TOOLPREFIX)gcc
 #CC    = clang
 STRIP = $(TOOLPREFIX)strip
@@ -101,31 +105,31 @@ $(CONFIG_STAMP):
 	@mkdir -p $(dir $@)
 	@echo $(CONFIG) > $@
 
-$(AMIGA_OBJ)/ne2000/%.c.o: src/ne2000/%.c
+$(AMIGA_OBJ)/ne2000/%.c.o: src/ne2000/%.c $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(AMIGA_OBJ)/ne2000/%.s.o: src/ne2000/%.s
+$(AMIGA_OBJ)/ne2000/%.s.o: src/ne2000/%.s $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(AMIGA_OBJ)/Tools/%.o: src/Tools/AmigaOS/%.c
+$(AMIGA_OBJ)/Tools/%.o: src/Tools/AmigaOS/%.c $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(TOOL_CFLAGS) $<
 	$(CC) $(TOOL_CFLAGS) -c -o $@ $<
 
-$(AMIGA_BIN)/$(TARGET): $(OBJS) $(CONFIG_STAMP)
+$(AMIGA_BIN)/$(TARGET): $(OBJS) $(CONFIG_STAMP) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(LDFLAGS) -o $@.debug $(OBJS) $(LIBS)
 	$(STRIP) $(STRIPFLAGS) -o $@ $@.debug
 
-$(AMIGA_BIN)/$(CLIENT_TARGET): $(CLIENT_OBJS) $(CONFIG_STAMP)
+$(AMIGA_BIN)/$(CLIENT_TARGET): $(CLIENT_OBJS) $(CONFIG_STAMP) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(CLIENT_OBJS) -lm
 
-$(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
+$(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
@@ -140,7 +144,7 @@ DIST_LICENSES = LICENSE licenses/MIT.txt licenses/matay-prm-rtl8029.txt
 DIST_INPUTS = $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) \
               $(INSTALL_FILES) src/dist/ReadMe $(DIST_LICENSES)
 
-$(STAGE): $(DIST_INPUTS)
+$(STAGE): $(DIST_INPUTS) $(THIS_MAKEFILE)
 	rm -rf $@
 	mkdir -p $@/C $@/Devs/Networks
 	cp $(AMIGA_BIN)/$(TARGET) $@/Devs/Networks/
@@ -169,13 +173,13 @@ $(DIST)/$(LHA_TARGET): $(STAGE)
 	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME)
 	$(LHA) -l $@
 
-$(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c
+$(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(HOST_CC) $(HOST_CFLAGS) -c -o $@ $<
 
-$(HOST_BIN)/server: $(SERVER_OBJS)
+$(HOST_BIN)/server: $(SERVER_OBJS) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
-	$(HOST_CC) -o $@ $^
+	$(HOST_CC) -o $@ $(SERVER_OBJS)
 
 # Leaves dist/ alone: a built release image survives a clean
 clean:
