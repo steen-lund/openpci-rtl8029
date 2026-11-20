@@ -78,6 +78,12 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define PCI_VENDOR_REALTEK 0x10EC
 #define PCI_DEVICE_RTL8029 0x8029
 
+/* Units 0 to MAX_UNITS-1, one card each. The unit number is one digit of DEV_UNITNAME   */
+/* (rev.h), the name of the unit's task, port and interrupt server.                        */
+#define MAX_UNITS        4
+#define UNIT_DIGIT       (sizeof(DEV_UNITNAME) - 3)   /* the 'x' before the closing ')' */
+_Static_assert(MAX_UNITS <= 10, "unit names have room for one digit");
+
 // Unit flags.
 
 #define UF_CONFIGURED   0x01
@@ -355,7 +361,7 @@ struct DevData
     struct Library *dd_DOSBase;
     struct Library *dd_TimerBase;
     struct Library *dd_MMUBase;  /* optional, see hw_is_cache_inhibited() */
-    struct UnitData *dd_Units[4];
+    struct UnitData *dd_Units[MAX_UNITS];
     struct timerequest dd_Treq;
 };
 
@@ -387,7 +393,7 @@ struct UnitData
     ULONG ud_RxSpace[386];   /* storage for ud_RxBuffer (1536 bytes + alignment) */
     UWORD *ud_RxBuffer;      /* one received frame, 2 bytes into ud_RxSpace: see FRAME_ALIGN */
                              /* and RXW_* for its word offsets                               */
-    UBYTE ud_Name[27];
+    UBYTE ud_Name[sizeof(DEV_UNITNAME)];
     UBYTE ud_EtherAddress[ETHER_ADDR_LEN];
     UBYTE ud_SoftAddress[ETHER_ADDR_LEN];
     struct Sana2DeviceStats ud_DevStats;
@@ -616,7 +622,7 @@ LONG DevOpen(register struct IOSana2Req *req reg(a1), register LONG unit reg(d0)
     DBG("DevOpen() called.");
     dd->dd_Lib.lib_OpenCnt++; // expunge protection
 
-    if ((unit >= 0) && (unit <= 3))
+    if ((unit >= 0) && (unit < MAX_UNITS))
     {
         if ((ud = OpenUnit(dd, unit, flags)))
         {
@@ -1165,8 +1171,8 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_DOSBase = dd->dd_DOSBase;
             ud->ud_TimerBase = dd->dd_TimerBase;
             ud->ud_MMUBase = dd->dd_MMUBase;
-            StrCopy(ud->ud_Name, "openpci-rtl8029.device (x)");
-            ud->ud_Name[24] = '0' + unit;
+            StrCopy(ud->ud_Name, DEV_UNITNAME);
+            ud->ud_Name[UNIT_DIGIT] = '0' + unit;
             ud->ud_RxQueue.mlh_Head = (struct MinNode *)&ud->ud_RxQueue.mlh_Tail;
             ud->ud_RxQueue.mlh_Tail = NULL;
             ud->ud_RxQueue.mlh_TailPred = (struct MinNode *)&ud->ud_RxQueue.mlh_Head;
