@@ -10,7 +10,9 @@ ADF_TARGET = openpci-rtl8029.adf
 LHA_TARGET = openpci-rtl8029.lha
 ADF_VOLUME = OpenPCI
 XDFTOOL = xdftool
-LHA     = lha
+# LHa for UNIX from the Amiga toolchain. Not plain "lha": Homebrew's lhasa installs an
+# lha command that can only extract.
+LHA     = $(dir $(TOOLPREFIX))lha
 VERSION = 2.0
 
 RELEASE = 0
