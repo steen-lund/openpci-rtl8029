@@ -72,6 +72,59 @@ prm-rtl8029.device history
 	 interrupts. It could lead to lost packets in heavy network traffic and
 	 slow CPU.
 
-2.0 (28.09.2024)
+2.0 (20.11.2026)
 
-  Renamed to openpci-rtl8029.device
+  Port to openpci.library by Steen Lund.
+
+  CHANGED: Renamed to openpci-rtl8029.device. Uses openpci.library, so it
+           works with any PCI bridge that library supports instead of only
+           the Prometheus.
+
+  FIXED: Full-size frames (1511 bytes and more) were dropped. The byte
+         count in the receive ring includes 4 bytes beyond the frame,
+         which were passed on and made full-size frames exceed the MTU.
+         This stalled web browsing.
+
+  FIXED: Receive ring boundary handling and the byte order of the receive
+         packet header. A corrupt ring header is detected and the ring
+         reset.
+
+  CHANGED: The interrupt server only masks the card's interrupts and
+           signals the unit task; all card access happens in the unit
+           task. No more Disable()/Enable(): the request queues are
+           protected by semaphores.
+
+  CHANGED: S2_ONLINE, S2_OFFLINE and S2_CONFIGINTERFACE run in the unit
+           task. Going offline returns all pending requests with
+           S2ERR_OUTOFSERVICE.
+
+  FIXED: Closing the device from another task than the one that opened
+         it hung (Roadshow's NetShutdown). Unit expunge fixed, and
+         exclusive opens are enforced.
+
+  FIXED: Write requests are validated and frames carry the station
+         address set with S2_CONFIGINTERFACE.
+
+  ADDED: Recovery from a full receive ring that keeps the frames already
+         in it. The card is stopped for less than 2 ms.
+
+  CHANGED: Faster: packet data moves through the card 32 bits at a time,
+           the card has two transmit buffers so the next frame is
+           uploaded while one is sent, read and write requests are queued
+           without a task switch, and frames are longword aligned for the
+           TCP/IP stack. FTP transfers ran at about 505 KB/s before; a
+           TCP benchmark now reaches about 750 KB/s receiving and 950 KB/s
+           sending on the same machine.
+
+  ADDED: Checks with mmu.library whether the card's registers are mapped
+         cache-inhibited and flushes the caches around accesses if not.
+
+  ADDED: Diagnostic counters through S2_GETSPECIALSTATS, including the
+         card's own error tallies, collisions and the unit task's state.
+         The s2stat tool prints them.
+
+  ADDED: The unit task priority (default 6) can be set without
+         rebuilding: SetEnv openpci-rtl8029.pri <n>.
+
+  ADDED: Unsupported SANA-II commands are answered with
+         S2ERR_NOT_SUPPORTED.
