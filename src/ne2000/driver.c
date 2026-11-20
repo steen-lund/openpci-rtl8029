@@ -44,8 +44,6 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #include <proto/mmu.h>
 #include <mmu/context.h>
 
-#define OK 0
-
 /* Card memory, in 256 byte pages: two transmit buffers of one full frame each, so that  */
 /* the next frame can be uploaded while one is on the wire, then the receive ring.         */
 #define TX_BUFFER   0x40
@@ -1219,7 +1217,7 @@ void S2DeviceQuery(struct UnitData *ud, struct IOSana2Req *req)
 
         // Report 30 bytes of data.
         query->SizeSupplied = query->SizeAvailable < 30 ? query->SizeAvailable : 30;
-        IoDone(ud, req, OK, OK);
+        IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
     }
     else
     {
@@ -1239,7 +1237,7 @@ void S2GetStationAddress(struct UnitData *ud, struct IOSana2Req *req)
     DBG_U("S2_GETSTATIONADDRESS.");
     CopyMem(ud->ud_SoftAddress, req->ios2_SrcAddr, ETHER_ADDR_LEN);
     CopyMem(ud->ud_EtherAddress, req->ios2_DstAddr, ETHER_ADDR_LEN);
-    IoDone(ud, req, OK, OK);
+    IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
     return;
 }
 
@@ -1260,7 +1258,7 @@ void S2Online(struct UnitData *ud, struct IOSana2Req *req)
     {
         ClearGlobalStats(ud);
         ud->ud_Flags |= UF_ONLINE;
-        IoDone(ud, req, OK, OK);
+        IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
     }
     else
         IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_GENERIC_ERROR);
@@ -1305,7 +1303,7 @@ void S2ConfigInterface(struct UnitData *ud, struct IOSana2Req *req)
         if (GoOnline(ud))
         {
             ud->ud_Flags |= UF_ONLINE | UF_CONFIGURED;
-            IoDone(ud, req, OK, OK);
+            IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
         }
         else
             IoDone(ud, req, S2ERR_NO_RESOURCES, S2WERR_GENERIC_ERROR);
@@ -1322,7 +1320,7 @@ void S2Offline(struct UnitData *ud, struct IOSana2Req *req)
     if (ud->ud_Flags & UF_ONLINE)
     {
         TakeOffline(ud);
-        IoDone(ud, req, OK, OK);
+        IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
     }
     else
         IoDone(ud, req, S2ERR_BAD_STATE, S2WERR_UNIT_OFFLINE);
@@ -1339,7 +1337,7 @@ void S2GetGlobalStats(struct UnitData *ud, struct IOSana2Req *req)
     if (req->ios2_StatData)
     {
         CopyMem(&ud->ud_DevStats, req->ios2_StatData, sizeof(struct Sana2DeviceStats));
-        IoDone(ud, req, OK, OK);
+        IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
     }
     else
         IoDone(ud, req, S2ERR_BAD_ARGUMENT, S2WERR_NULL_POINTER);
@@ -1380,7 +1378,7 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
         rec[i].String = (STRPTR)DiagNames[i];
     }
     hdr->RecordCountSupplied = i;
-    IoDone(ud, req, OK, OK);
+    IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
 }
 
 ///
@@ -1390,7 +1388,7 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
 {
     USE_U(SysBase)
     struct NSDeviceQueryResult *qdata;
-    LONG error = OK;
+    LONG error = 0;
 
     DBG_U("NSCMD_DEVICEQUERY.");
     if (req->io_Length >= sizeof(struct NSDeviceQueryResult))
@@ -2413,7 +2411,7 @@ void ServiceCard(struct UnitData *ud)
                 {
                     DIAG(DG_TXDONE)++;
                     ud->ud_DevStats.PacketsSent++;
-                    IoDone(ud, req, OK, OK);
+                    IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
                 }
             }
             else
@@ -2477,7 +2475,7 @@ void ServiceCard(struct UnitData *ud)
                     ud->ud_DevStats.PacketsReceived++;
                     DIAG(DG_RXDELIVERED)++;
                     PERF_STAMP(ud->ud_RxStamp, ud->ud_RxStampSet);
-                    IoDone(ud, req, OK, OK);
+                    IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
                 }
                 else
                 {
@@ -2580,7 +2578,7 @@ void MainLoop(struct UnitData *ud, struct MsgPort *port)
                     DBG1_T("-> FLUSH [$%08lx].", req);
                     FlushQueues(ud, IOERR_ABORTED, S2WERR_GENERIC_ERROR);
                     DBG1_T("<- FLUSH [$%08lx].", req);
-                    IoDone(ud, req, OK, OK);
+                    IoDone(ud, req, S2ERR_NO_ERROR, S2WERR_GENERIC_ERROR);
                     break;
 
                 default:
