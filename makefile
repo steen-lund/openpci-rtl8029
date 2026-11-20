@@ -121,13 +121,16 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
-# Floppy image with the driver and the tools for copying to the real machine. Always built
+# Floppy image with the driver, its installer and the tools for copying to the real machine. Always built
 # from scratch: replacing files inside an existing image has produced corrupt copies.
-$(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET)
+INSTALL_FILES = src/ne2000/Install src/ne2000/$(TARGET).info
+
+$(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $(INSTALL_FILES)
 	@mkdir -p $(dir $@)
 	rm -f $@
 	$(XDFTOOL) $@ format $(ADF_VOLUME) \
 		+ write $(AMIGA_BIN)/$(TARGET) \
+		$(foreach f,$(INSTALL_FILES),+ write $(f)) \
 		+ write $(AMIGA_BIN)/$(CLIENT_TARGET) \
 		+ write $(AMIGA_BIN)/$(STAT_TARGET)
 	$(XDFTOOL) $@ list

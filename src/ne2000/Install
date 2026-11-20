@@ -1,15 +1,17 @@
 ;NE2000 Ethernet driver install script
 ;Grzegorz "Krashan" Kraszewski
 ;$VER: Ne2000 install 0.21 (9.9.2001)
-;Modified 2024-2026 by Steen Lund for openpci-rtl8029.device (card search message,
-;Polish strings removed)
+;Modified 2024-2026 by Steen Lund for openpci-rtl8029.device: new file names, card
+;check with lspci from the openpci package, Polish strings removed
 ;SPDX-License-Identifier: GPL-2.0-or-later
 
 (complete 0)
 
 ;language strings
 (set #msg_welcome "Welcome in RTL8029 Ethernet board driver installer.")
-(set #msg_nocard "Sorry, install script did not found any RTL8029 based Ethernet card inserted in your system. Make sure it is inserted and working and run the script again.")
+(set #msg_nocard "Sorry, the installer did not find any RTL8029 based Ethernet card in your system. Make sure it is inserted and working and run the installer again.")
+(set #msg_noopenpci "openpci.library was not found in LIBS:. The driver needs it: install the openpci package (Aminet driver/other/openpci68k.lha) first.")
+(set #msg_nolspci "The lspci command of the openpci package could not be run, so the installer cannot check for an RTL8029 card. The driver will be installed anyway.")
 (set #msg_destdir "Select the directory where the driver file will be copied to.")
 (set #msg_desthelp "There is really no reason why you may want to change the default 'DEVS:Networks/' location. But you are an expert, aren't you? So do what you want, but have been warned.")
 (set #msg_copydrv "Copying driver file.")
@@ -26,7 +28,15 @@
 
 (set #destpath "DEVS:Networks")
 (welcome #msg_welcome)
-(set #cards (run "findcard >NIL: VENDOR=10EC DEVICE=8029" (safe)))
+
+;Look for the card in the device list of lspci. With NUMERIC it prints the vendor and
+;device IDs as "10ec:8029". Search returns 0 when it finds the text. If lspci printed no
+;device at all, it is missing or failed, and the card cannot be checked.
+(set #lspci "T:openpci-rtl8029.lspci")
+(run (cat "lspci NUMERIC >" #lspci) (safe))
+(set #card (= 0 (run (cat "Search >NIL: " #lspci " 10ec:8029 QUIET") (safe))))
+(set #listed (= 0 (run (cat "Search >NIL: " #lspci " \"(rev \" QUIET") (safe))))
+(delete #lspci (safe))
 (set #operation
 	(askchoice
    	(prompt #msg_choice)
@@ -39,7 +49,13 @@
 
 (if (= #operation 0)
 	(
-      (if (> #cards 0)
+      (if (not (exists "LIBS:openpci.library"))
+         (abort #msg_noopenpci)
+      )
+      (if (not #listed)
+         (message #msg_nolspci)
+      )
+      (if (or #card (not #listed))
       	(
          	(if (= @user-level 2)
             	(set #destpath
@@ -56,7 +72,7 @@
             	(prompt #msg_copydrv)
                (help #msg_copydrv)
                (confirm)
-               (source "prm-rtl8029.device")
+               (source "openpci-rtl8029.device")
                (dest #destpath)
                (infos)
             )
@@ -79,7 +95,7 @@
       )
 
       (if (= 1 (askbool (prompt #msg_sure) (help #msg_hsure) (default 0))
-      	(delete (tackon #destpath "prm-rtl8029.device") (prompt "") (help "") (infos))
+      	(delete (tackon #destpath "openpci-rtl8029.device") (prompt "") (help "") (infos))
          (set #msg_exit (cat @app-name #msg_removed #destpath #msg_removed1))
          (exit #msg_exit (quiet))
          )

@@ -25,6 +25,21 @@ make RELEASE=1 adf   # dist/openpci-rtl8029.adf: driver, test client and s2stat
 make server          # bin/macOS/server: host side of the network test
 ```
 
+## Installing
+
+The driver needs `openpci.library` from the openpci package (Aminet
+`driver/other/openpci68k.lha`). Write `dist/openpci-rtl8029.adf` to a floppy (or mount it), then
+from a Shell:
+
+```
+cd OpenPCI:
+Installer SCRIPT Install APPNAME openpci-rtl8029.device
+```
+
+The installer copies the driver to `DEVS:Networks/`, or removes it. It checks for the card
+with the `lspci` command of the openpci package; if `lspci` cannot be run, it says so and
+installs anyway. To install by hand, copy `openpci-rtl8029.device` to `DEVS:Networks/`.
+
 ## License
 
 The repository holds parts under different licenses:
