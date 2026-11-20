@@ -43,23 +43,156 @@ static struct
     struct Sana2SpecialStatRecord records[MAX_RECORDS];
 } stats;
 
-/* Value of a named counter, 0 if the driver does not supply it */
-static ULONG stat_value(const char *name)
+static UBYTE printed[MAX_RECORDS];
+
+/* The counters by group, in the order they are printed. Looked up by name, so the driver
+ * may report them in any order; anything not listed here is printed under "Other". */
+static const char *const group_unit[] = {
+    "TaskState", "TaskPri", "MMUInhibit", "RtlConfig", NULL };
+static const char *const group_requests[] = {
+    "ReadsQueued", "WritesQueued", NULL };
+static const char *const group_card[] = {
+    "Interrupts", "ServiceRuns", "IntSeen", "LastIntStatus", "NextPage", "LastCurrent",
+    "TxPending", NULL };
+static const char *const group_rx[] = {
+    "RxFrames", "RxDelivered", "RxNoReader", "LastDropType", "RxWrapped", NULL };
+static const char *const group_rxerr[] = {
+    "Overflows", "RxMissed", "RxCrcErrors", "RxAlignErrors", "RxErrInts", "LastRxStatus",
+    "RxBadHeader", "LastBadHeader", NULL };
+static const char *const group_tx[] = {
+    "TxStarted", "TxDone", "TxWireIdle", "TxIdleMsgWait", "TxWaitPolls", NULL };
+static const char *const group_txerr[] = {
+    "TxErrors", "TxCollisions", "TxLateColl", "TxCarrierLost", "TxNoPending",
+    "TxDmaTimeout", NULL };
+static const char *const group_sums[] = {
+    "RxSumChecked", "RxSumBad", "RxSumBadWrap", "LastSumBad", "RxEchoReq", NULL };
+static const char *const group_timing[] = {
+    "EClockFreq", "TicksService", "TicksRxRead", "TicksRxCopy", "TicksTx", "TicksTxCopy",
+    "TicksTxUpload", "TicksTxWait", "TicksIntLat", "MaxTicksIntLat", "SlowIntLat",
+    "MaxTicksTurn", "SlowTurn", NULL };
+
+/* Groups that only a driver built with an option fills in; the record named in 'present'
+ * is non-zero when it was. */
+static const struct
+{
+    const char *title;
+    const char *const *names;
+    const char *present;
+    const char *absent;
+} groups[] = {
+    { "Unit task and card setup", group_unit,     NULL, NULL },
+    { "Requests from the stack",  group_requests, NULL, NULL },
+    { "Interrupts and card state", group_card,    NULL, NULL },
+    { "Receive",                  group_rx,       NULL, NULL },
+    { "Receive errors",           group_rxerr,    NULL, NULL },
+    { "Transmit",                 group_tx,       NULL, NULL },
+    { "Transmit errors",          group_txerr,    NULL, NULL },
+    { "Receive checksums",        group_sums,     "RxSumChecked",
+      "none verified (needs a driver built with RX_VERIFY_CHECKSUMS 1)" },
+    { "Timing",                   group_timing,   "EClockFreq",
+      "not measured (needs a driver built with make PERF=1)" },
+};
+
+/* Index of a named record, -1 if the driver does not supply it */
+static LONG find_record(const char *name)
 {
     ULONG i;
 
     for (i = 0; i < stats.header.RecordCountSupplied; i++)
     {
         if (!strcmp((const char *)stats.records[i].String, name))
-            return stats.records[i].Count;
+            return (LONG)i;
     }
-    return 0;
+    return -1;
+}
+
+/* Value of a named counter, 0 if the driver does not supply it */
+static ULONG stat_value(const char *name)
+{
+    LONG i = find_record(name);
+
+    return (i >= 0) ? stats.records[i].Count : 0;
 }
 
 /* E-clock ticks to microseconds without overflowing 32 bits */
 static ULONG ticks_to_us(ULONG ticks, ULONG eclock)
 {
     return (ticks / eclock) * 1000000 + ((ticks % eclock) * 1000) / (eclock / 1000);
+}
+
+static void print_record(ULONG i, ULONG eclock)
+{
+    const char *name = (const char *)stats.records[i].String;
+    ULONG value = stats.records[i].Count;
+
+    printed[i] = 1;
+    printf("  %-14s %10lu  $%08lx", name, (unsigned long)value, (unsigned long)value);
+    if (!strcmp(name, "TaskState") && value < sizeof(task_states) / sizeof(task_states[0]))
+        printf("  (%s)", task_states[value]);
+
+    /* A single duration */
+    if (!strncmp(name, "MaxTicks", 8) && eclock)
+        printf("  %lu us", ticks_to_us(value, eclock));
+
+    /* Time counters: total in milliseconds and the average per packet */
+    if (!strncmp(name, "Ticks", 5) && eclock)
+    {
+        BOOL tx = !strncmp(name, "TicksTx", 7);
+        BOOL intr = !strcmp(name, "TicksIntLat");
+        ULONG count = stat_value(tx ? "TxStarted" : intr ? "Interrupts" : "RxFrames");
+
+        printf("  %lu ms", ticks_to_us(value, eclock) / 1000);
+        if (count)
+            printf(", %lu us per %s", ticks_to_us(value / count, eclock),
+                   tx ? "sent packet" : intr ? "interrupt" : "received packet");
+    }
+    printf("\n");
+}
+
+static void print_stats(void)
+{
+    ULONG eclock = stat_value("EClockFreq");
+    ULONG g, i;
+    BOOL other = FALSE;
+
+    memset(printed, 0, sizeof(printed));
+    for (g = 0; g < sizeof(groups) / sizeof(groups[0]); g++)
+    {
+        const char *const *n;
+
+        if (groups[g].present && !stat_value(groups[g].present))
+        {
+            /* Mark them printed so they do not turn up under "Other" */
+            for (n = groups[g].names; *n; n++)
+            {
+                LONG r = find_record(*n);
+                if (r >= 0)
+                    printed[r] = 1;
+            }
+            printf("%s: %s\n\n", groups[g].title, groups[g].absent);
+            continue;
+        }
+
+        printf("%s\n", groups[g].title);
+        for (n = groups[g].names; *n; n++)
+        {
+            LONG r = find_record(*n);
+            if (r >= 0)
+                print_record((ULONG)r, eclock);
+        }
+        printf("\n");
+    }
+
+    for (i = 0; i < stats.header.RecordCountSupplied; i++)
+    {
+        if (!printed[i])
+        {
+            if (!other)
+                printf("Other\n");
+            other = TRUE;
+            print_record(i, eclock);
+        }
+    }
 }
 
 int main(int argc, char **argv)
@@ -103,35 +236,7 @@ int main(int argc, char **argv)
 
             if (DoIO((struct IORequest *)req) == 0)
             {
-                ULONG eclock = stat_value("EClockFreq");
-
-                for (i = 0; i < stats.header.RecordCountSupplied; i++)
-                {
-                    const char *name = (const char *)stats.records[i].String;
-                    ULONG value = stats.records[i].Count;
-
-                    printf("%-14s %10lu  $%08lx", name, (unsigned long)value, (unsigned long)value);
-                    if (!strcmp(name, "TaskState") && value < sizeof(task_states) / sizeof(task_states[0]))
-                        printf("  (%s)", task_states[value]);
-
-                    /* A single duration */
-                    if (!strncmp(name, "MaxTicks", 8) && eclock)
-                        printf("  %lu us", ticks_to_us(value, eclock));
-
-                    /* Time counters: total in milliseconds and the average per packet */
-                    if (!strncmp(name, "Ticks", 5) && eclock)
-                    {
-                        BOOL tx = !strncmp(name, "TicksTx", 7);
-                        BOOL intr = !strcmp(name, "TicksIntLat");
-                        ULONG count = stat_value(tx ? "TxStarted" : intr ? "Interrupts" : "RxFrames");
-
-                        printf("  %lu ms", ticks_to_us(value, eclock) / 1000);
-                        if (count)
-                            printf(", %lu us per %s", ticks_to_us(value / count, eclock),
-                                   tx ? "sent packet" : intr ? "interrupt" : "received packet");
-                    }
-                    printf("\n");
-                }
+                print_stats();
                 rc = 0;
             }
             else

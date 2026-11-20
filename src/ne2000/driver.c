@@ -160,62 +160,79 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 
 enum
 {
-    DG_INTERRUPTS,    /* interrupts claimed by IntCode() */
-    DG_SERVICERUNS,   /* ServiceCard() calls */
-    DG_RXFRAMES,      /* frames read from the ring */
-    DG_RXDELIVERED,   /* ... handed to a pending CMD_READ */
-    DG_RXNOREADER,    /* ... dropped, no pending CMD_READ for the packet type */
-    DG_LASTDROPTYPE,  /* packet type of the last frame dropped that way */
-    DG_RXBADHEADER,   /* corrupt ring headers (each resets the ring) */
-    DG_LASTBADHEADER, /* the last corrupt ring header */
-    DG_OVERFLOWS,     /* ring overflow interrupts */
-    DG_TXSTARTED,     /* transmits started */
-    DG_TXDONE,        /* transmit interrupts, ok */
-    DG_TXERRORS,      /* transmit interrupts, error */
-    DG_TXNOPENDING,   /* transmit interrupts with no request in flight */
-    DG_TXDMATIMEOUT,  /* upload to the card did not report completion */
+    /* Unit task and card setup */
+    DG_TASKSTATE,     /* what the unit task is doing, TS_* */
+    DG_TASKPRI,       /* priority of the unit task */
+    DG_MMUINHIBIT,    /* 1 if the card registers are cache-inhibited through mmu.library */
+    DG_RTLCONFIG,     /* RTL8029 CONFIG0, CONFIG2, CONFIG3 (low byte); $40 in CONFIG3 = full duplex */
+
+    /* Requests from the stack */
     DG_READSQUEUED,   /* CMD_READ requests received */
     DG_WRITESQUEUED,  /* CMD_WRITE/S2_BROADCAST requests received */
-    DG_TXPENDING,     /* requests held in the card's transmit buffers (0 to 2) */
+
+    /* Interrupts and card state */
+    DG_INTERRUPTS,    /* interrupts claimed by IntCode() */
+    DG_SERVICERUNS,   /* ServiceCard() calls */
+    DG_INTSEEN,       /* all interrupt status bits ever seen, including ones the driver does not use */
+    DG_LASTINTSTATUS, /* last non-zero interrupt status seen by ServiceCard() */
     DG_NEXTPAGE,      /* driver's ring read pointer */
     DG_LASTCURRENT,   /* card's ring write pointer when last read */
-    DG_LASTINTSTATUS, /* last non-zero interrupt status seen by ServiceCard() */
-    DG_TASKSTATE,     /* what the unit task is doing, TS_* */
-    DG_MMUINHIBIT,    /* 1 if the card registers are cache-inhibited through mmu.library */
-    DG_ECLOCKFREQ,    /* E-clock ticks per second, the unit of the Ticks counters below */
-    DG_TICKSSERVICE,  /* total time spent in ServiceCard() */
-    DG_TICKSRXREAD,   /* ... of which reading frames from the card */
-    DG_TICKSRXCOPY,   /* ... of which handing frames to the stack (its CopyToBuff + reply) */
-    DG_TICKSTX,       /* total time spent in UploadPacket() (the stack's CopyFromBuff + upload) */
-    DG_RXALIGNERRORS, /* card tally: received frames with alignment errors (dropped by the card) */
-    DG_RXCRCERRORS,   /* card tally: received frames with CRC errors (dropped by the card) */
+    DG_TXPENDING,     /* requests held in the card's transmit buffers (0 to 2) */
+
+    /* Receive */
+    DG_RXFRAMES,      /* frames read from the ring */
+    DG_RXDELIVERED,   /* received frames handed to a pending CMD_READ */
+    DG_RXNOREADER,    /* received frames dropped: no pending CMD_READ for the packet type */
+    DG_LASTDROPTYPE,  /* packet type of the last frame dropped that way */
+    DG_RXWRAPPED,     /* received frames that wrapped around the end of the card's ring */
+
+    /* Receive errors */
+    DG_OVERFLOWS,     /* ring overflow interrupts */
     DG_RXMISSED,      /* card tally: frames the card could not store (ring full or card stopped) */
+    DG_RXCRCERRORS,   /* card tally: received frames with CRC errors (dropped by the card) */
+    DG_RXALIGNERRORS, /* card tally: received frames with alignment errors (dropped by the card) */
+    DG_RXERRINTS,     /* times the card flagged a receive error (frame rejected by the card) */
+    DG_LASTRXSTATUS,  /* the card's receive status register when it last did */
+    DG_RXBADHEADER,   /* corrupt ring headers (each resets the ring) */
+    DG_LASTBADHEADER, /* the last corrupt ring header */
+
+    /* Transmit */
+    DG_TXSTARTED,     /* transmits started */
+    DG_TXDONE,        /* transmit interrupts, ok */
+    DG_TXWIREIDLE,    /* transmits finished with no next frame waiting on the card (wire goes idle) */
+    DG_TXIDLEMSGWAIT, /* ... while write requests were already queued: the driver, not the    */
+                      /*     stack, was too slow to pick them up                              */
+    DG_TXWAITPOLLS,   /* status reads spent waiting for upload completion, in total */
+
+    /* Transmit errors */
+    DG_TXERRORS,      /* transmit interrupts, error */
     DG_TXCOLLISIONS,  /* collisions while transmitting (each one retried by the card) */
     DG_TXLATECOLL,    /* transmits hit by a collision after the first 64 bytes */
     DG_TXCARRIERLOST, /* transmits during which the carrier was lost */
-    DG_RTLCONFIG,     /* RTL8029 CONFIG0, CONFIG2, CONFIG3 (low byte); $40 in CONFIG3 = full duplex */
-    DG_RXWRAPPED,     /* received frames that wrapped around the end of the card's ring */
+    DG_TXNOPENDING,   /* transmit interrupts with no request in flight */
+    DG_TXDMATIMEOUT,  /* upload to the card did not report completion */
+
+    /* Receive checksums (RX_VERIFY_CHECKSUMS) */
     DG_RXSUMCHECKED,  /* received IPv4 frames whose checksums the driver verified (diagnostic) */
     DG_RXSUMBAD,      /* ... that failed: the data read from the card is damaged */
     DG_RXSUMBADWRAP,  /* ... of which wrapped around the end of the ring */
     DG_LASTSUMBAD,    /* last damaged frame: ring start page << 16 | frame length */
     DG_RXECHOREQ,     /* ICMP echo requests (pings) received, for counting against a known number sent */
-    DG_RXERRINTS,     /* times the card flagged a receive error (frame rejected by the card) */
-    DG_LASTRXSTATUS,  /* the card's receive status register when it last did */
-    DG_INTSEEN,       /* all interrupt status bits ever seen, including ones the driver does not use */
+
+    /* Timing (make PERF=1) */
+    DG_ECLOCKFREQ,    /* PERF: E-clock ticks per second, the unit of the Ticks counters */
+    DG_TICKSSERVICE,  /* PERF: total time spent in ServiceCard() */
+    DG_TICKSRXREAD,   /* PERF: part of TicksService reading frames from the card */
+    DG_TICKSRXCOPY,   /* PERF: part of TicksService handing frames to the stack (its CopyToBuff + reply) */
+    DG_TICKSTX,       /* PERF: total time spent in UploadPacket() (the stack's CopyFromBuff + upload) */
+    DG_TICKSTXCOPY,   /* PERF: part of TicksTx in the stack's CopyFromBuff */
+    DG_TICKSTXUPLOAD, /* PERF: part of TicksTx writing the frame to the card */
+    DG_TICKSTXWAIT,   /* PERF: part of TicksTx waiting for the card to report the upload done */
+    DG_TICKSINTLAT,   /* PERF: total time from the card's interrupt to the unit task servicing it */
     DG_MAXTICKSINTLAT, /* PERF: longest time from the card's interrupt to the unit task servicing it */
     DG_SLOWINTLAT,    /* PERF: times that took more than 2 ms */
     DG_MAXTICKSTURN,  /* PERF: longest time from handing a frame to the stack to its next write request */
     DG_SLOWTURN,      /* PERF: times that took more than 5 ms */
-    DG_TASKPRI,       /* priority of the unit task */
-    DG_TXWIREIDLE,    /* transmits finished with no next frame waiting on the card (wire goes idle) */
-    DG_TXIDLEMSGWAIT, /* ... while write requests were already queued: the driver, not the    */
-                      /*     stack, was too slow to pick them up                              */
-    DG_TICKSTXCOPY,   /* PERF: part of TicksTx in the stack's CopyFromBuff */
-    DG_TICKSTXUPLOAD, /* PERF: part of TicksTx writing the frame to the card */
-    DG_TICKSTXWAIT,   /* PERF: part of TicksTx waiting for the card to report the upload done */
-    DG_TXWAITPOLLS,   /* status reads spent waiting for upload completion, in total */
-    DG_TICKSINTLAT,   /* PERF: total time from the card's interrupt to the unit task servicing it */
     DG_COUNT
 };
 
@@ -226,18 +243,64 @@ enum
 #define TS_SEND      4 /* in UploadPacket() */
 #define TS_OVERFLOW  5 /* in overflow recovery */
 
+/* Record names, as S2_GETSPECIALSTATS reports them; s2stat groups them by these names */
 static const char *const DiagNames[DG_COUNT] =
 {
-    "Interrupts", "ServiceRuns", "RxFrames", "RxDelivered", "RxNoReader", "LastDropType", "RxBadHeader",
-    "LastBadHeader", "Overflows", "TxStarted", "TxDone", "TxErrors", "TxNoPending",
-    "TxDmaTimeout", "ReadsQueued", "WritesQueued", "TxPending", "NextPage", "LastCurrent",
-    "LastIntStatus", "TaskState", "MMUInhibit", "EClockFreq", "TicksService", "TicksRxRead",
-    "TicksRxCopy", "TicksTx", "RxAlignErrors", "RxCrcErrors", "RxMissed", "TxCollisions",
-    "TxLateColl", "TxCarrierLost", "RtlConfig", "RxWrapped", "RxSumChecked", "RxSumBad",
-    "RxSumBadWrap", "LastSumBad", "RxEchoReq", "RxErrInts", "LastRxStatus", "IntSeen",
-    "MaxTicksIntLat", "SlowIntLat", "MaxTicksTurn", "SlowTurn", "TaskPri",
-    "TxWireIdle", "TxIdleMsgWait", "TicksTxCopy", "TicksTxUpload", "TicksTxWait", "TxWaitPolls",
-    "TicksIntLat"
+    [DG_TASKSTATE] = "TaskState",
+    [DG_TASKPRI] = "TaskPri",
+    [DG_MMUINHIBIT] = "MMUInhibit",
+    [DG_RTLCONFIG] = "RtlConfig",
+    [DG_READSQUEUED] = "ReadsQueued",
+    [DG_WRITESQUEUED] = "WritesQueued",
+    [DG_INTERRUPTS] = "Interrupts",
+    [DG_SERVICERUNS] = "ServiceRuns",
+    [DG_INTSEEN] = "IntSeen",
+    [DG_LASTINTSTATUS] = "LastIntStatus",
+    [DG_NEXTPAGE] = "NextPage",
+    [DG_LASTCURRENT] = "LastCurrent",
+    [DG_TXPENDING] = "TxPending",
+    [DG_RXFRAMES] = "RxFrames",
+    [DG_RXDELIVERED] = "RxDelivered",
+    [DG_RXNOREADER] = "RxNoReader",
+    [DG_LASTDROPTYPE] = "LastDropType",
+    [DG_RXWRAPPED] = "RxWrapped",
+    [DG_OVERFLOWS] = "Overflows",
+    [DG_RXMISSED] = "RxMissed",
+    [DG_RXCRCERRORS] = "RxCrcErrors",
+    [DG_RXALIGNERRORS] = "RxAlignErrors",
+    [DG_RXERRINTS] = "RxErrInts",
+    [DG_LASTRXSTATUS] = "LastRxStatus",
+    [DG_RXBADHEADER] = "RxBadHeader",
+    [DG_LASTBADHEADER] = "LastBadHeader",
+    [DG_TXSTARTED] = "TxStarted",
+    [DG_TXDONE] = "TxDone",
+    [DG_TXWIREIDLE] = "TxWireIdle",
+    [DG_TXIDLEMSGWAIT] = "TxIdleMsgWait",
+    [DG_TXWAITPOLLS] = "TxWaitPolls",
+    [DG_TXERRORS] = "TxErrors",
+    [DG_TXCOLLISIONS] = "TxCollisions",
+    [DG_TXLATECOLL] = "TxLateColl",
+    [DG_TXCARRIERLOST] = "TxCarrierLost",
+    [DG_TXNOPENDING] = "TxNoPending",
+    [DG_TXDMATIMEOUT] = "TxDmaTimeout",
+    [DG_RXSUMCHECKED] = "RxSumChecked",
+    [DG_RXSUMBAD] = "RxSumBad",
+    [DG_RXSUMBADWRAP] = "RxSumBadWrap",
+    [DG_LASTSUMBAD] = "LastSumBad",
+    [DG_RXECHOREQ] = "RxEchoReq",
+    [DG_ECLOCKFREQ] = "EClockFreq",
+    [DG_TICKSSERVICE] = "TicksService",
+    [DG_TICKSRXREAD] = "TicksRxRead",
+    [DG_TICKSRXCOPY] = "TicksRxCopy",
+    [DG_TICKSTX] = "TicksTx",
+    [DG_TICKSTXCOPY] = "TicksTxCopy",
+    [DG_TICKSTXUPLOAD] = "TicksTxUpload",
+    [DG_TICKSTXWAIT] = "TicksTxWait",
+    [DG_TICKSINTLAT] = "TicksIntLat",
+    [DG_MAXTICKSINTLAT] = "MaxTicksIntLat",
+    [DG_SLOWINTLAT] = "SlowIntLat",
+    [DG_MAXTICKSTURN] = "MaxTicksTurn",
+    [DG_SLOWTURN] = "SlowTurn",
 };
 
 #define DIAG(n) (ud->ud_Diag[n])
