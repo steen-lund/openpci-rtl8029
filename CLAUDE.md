@@ -8,7 +8,7 @@ A SANA-II network device driver (`openpci-rtl8029.device`) for RTL8029 (NE2000-c
 
 The repo also contains a TCP client/server pair used to exercise the driver end to end.
 
-Licensing (details in `README.md`): the driver in `src/ne2000/` is GPL-2.0-or-later, with Matay's original condition that it not be included in a commercial product (`licenses/matay-prm-rtl8029.txt`, keep unchanged). The tools in `src/Tools/` are MIT. Source files carry an `SPDX-License-Identifier` line; new files get the header of their part, and driver files keep both copyright lines (Matay/Kraszewski and Steen Lund).
+Licensing (details in `README.md`): the driver in `src/ne2000/` is GPL-2.0-or-later, with Matay's original condition that it not be included in a commercial product (`licenses/matay-prm-rtl8029.txt`, keep unchanged). The tools in `src/Tools/` are MIT. Source files carry an `SPDX-License-Identifier` line; the distributions carry `src/dist/ReadMe` (copyright, license, source URL) and the license texts, which the GPL requires next to the binaries; new files get the header of their part, and driver files keep both copyright lines (Matay/Kraszewski and Steen Lund).
 
 ## Build
 
@@ -43,7 +43,7 @@ There are no automated tests; nothing can be run on the host except the server. 
 
 The user runs the Amiga side and pastes back results (the `output*.txt` files in the repo root are such captures). After changing the driver, a successful `make` is the only verification available locally — say so rather than claiming a fix works.
 
-Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `dist/openpci-rtl8029.adf` (volume `OpenPCI`) from scratch with xdftool. The image and the LhA archive share one layout, staged in `obj/dist/openpci-rtl8029/` (installer at the root, driver in `Devs/Networks`, tools in `C`); change it there, in the `$(STAGE)` rule of the makefile. Never update files inside an existing image: doing that with ADFMaster 3 produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic).
+Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `dist/openpci-rtl8029.adf` (volume `OpenPCI`) from scratch with xdftool. The image and the LhA archive share one layout, staged in `obj/dist/openpci-rtl8029/` (installer, `ReadMe` and `Licenses/` at the root, driver in `Devs/Networks`, tools in `C`); change it there, in the `$(STAGE)` rule of the makefile. Never update files inside an existing image: doing that with ADFMaster 3 produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic).
 
 Diagnosing on the real machine:
 

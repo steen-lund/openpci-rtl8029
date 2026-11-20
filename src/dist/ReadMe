@@ -1,0 +1,48 @@
+openpci-rtl8029.device
+======================
+
+SANA-II network driver for RTL8029 (NE2000 compatible) PCI Ethernet cards
+on classic AmigaOS (m68k), using openpci.library.
+
+Contents
+
+  Install                               installer, double-click to run
+  Devs/Networks/openpci-rtl8029.device  the driver
+  C/client                              network test client
+  C/s2stat                              prints the driver's counters
+  Licenses/                             license texts
+
+Requirements
+
+  openpci.library from the openpci package (Aminet driver/other/
+  openpci68k.lha).
+
+Copyright and license
+
+  The driver:
+    Copyright (C) 2001-2004 Matay; written by Grzegorz Kraszewski as
+    prm-rtl8029.device
+    Copyright (C) 2024-2026 Steen Lund
+
+    This driver is free software: you can redistribute it and/or modify it
+    under the terms of the GNU General Public License as published by the
+    Free Software Foundation, either version 2 of the License, or (at your
+    option) any later version. See Licenses/GPL-2.0.txt.
+
+    Matay's original release of the source (Licenses/Matay-original.txt)
+    also states that no part of the driver may be included in a commercial
+    product. This project honours that condition.
+
+  client and s2stat:
+    Copyright (c) 2025-2026 Steen Lund
+    MIT license, see Licenses/MIT.txt.
+
+  This software comes with ABSOLUTELY NO WARRANTY, to the extent permitted
+  by applicable law. See the license texts for details.
+
+Source code
+
+  The complete source code, including the scripts used to build these
+  files, is available at:
+
+    https://github.com/steen-lund/openpci-rtl8029

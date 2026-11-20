@@ -1,5 +1,5 @@
 .DS_Store
-obj
-bin
-dist
+/obj
+/bin
+/dist
 rtl_8029pci.device
