@@ -7,12 +7,12 @@
 
 3. Build the server (if needed):
    ```bash
-   make -C src/Tools/macOS -f Makefile.server
+   make server
    ```
 
 4. Run the server (it will show you its IP addresses):
    ```bash
-   ./src/Tools/macOS/server
+   ./bin/macOS/server
    ```
 
 5. Note the IP address shown (example: 192.168.1.100)
@@ -20,8 +20,8 @@
 
 ## Test 2: Enhanced Client Test (Amiga)
 
-1. Copy `bin/client` to your Amiga
-2. Copy `bin/openpci-rtl8029.device` to your Amiga's DEVS:Networks/
+1. Copy `bin/AmigaOS/client` to your Amiga
+2. Copy `bin/AmigaOS/openpci-rtl8029.device` to your Amiga's DEVS:Networks/
 3. Configure your TCP/IP stack to use the driver
 4. Assign an IP on the same subnet (e.g., 192.168.1.50)
 

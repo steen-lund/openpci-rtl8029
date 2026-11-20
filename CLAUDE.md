@@ -13,19 +13,19 @@ The repo also contains a TCP client/server pair used to exercise the driver end 
 Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (path is hard-coded in `makefile` as `TOOLPREFIX`).
 
 ```bash
-make                 # driver + Amiga test client -> bin/
-make driver          # bin/openpci-rtl8029.device (+ unstripped .debug)
-make client          # bin/client (Amiga-side test program)
-make s2stat          # bin/s2stat (Amiga-side tool printing the driver's diagnostic counters)
-make adf             # bin/openpci-rtl8029.adf: floppy image with driver + tools (needs xdftool)
+make                 # driver + Amiga tools (debug build) -> bin/AmigaOS/
+make driver          # bin/AmigaOS/openpci-rtl8029.device (+ unstripped .debug)
+make client          # bin/AmigaOS/client (Amiga-side test program)
+make s2stat          # bin/AmigaOS/s2stat (Amiga-side tool printing the driver's diagnostic counters)
+make adf             # dist/openpci-rtl8029.adf: floppy image with driver + tools (needs xdftool)
+make server          # bin/macOS/server: host-side test server (host cc; not part of plain make)
 make PERF=1          # add per-packet timing counters to the driver (combine with RELEASE=1)
 make RELEASE=1       # -O2, no debug output (default is -O0 -g -DPDEBUG)
-make clean
-
-cd src/Tools/macOS && make -f Makefile.server   # host-side test server -> src/Tools/macOS/server
+make clean           # removes obj/ and bin/; make distclean also removes dist/
 ```
 
 - The build uses `-Wall -Werror`; any warning fails it.
+- Output never goes into `src/`. Objects go to `obj/AmigaOS/<config>/` (`debug`, `release`, plus `-perf` with `PERF=1`) and `obj/macOS/`, so switching between `RELEASE`/`PERF` settings needs no `make clean`. Executables go to `bin/AmigaOS/` and `bin/macOS/` and are shared by all configurations: `bin/AmigaOS/.config` records which one built them, and changing configuration relinks them. The floppy image goes to `dist/`.
 - `include/` holds third-party headers the toolchain does not ship: the openpci.library SDK (Aminet `driver/other/openpci68k.lha`), mmu.library (MuManual from NDK 3.2) and `devices/sana2.h` (NDK 3.2). `include/proto/*.h` and `include/inline/*.h` are generated — do not hand-edit; regenerate from `include/fd/*.fd` with `fd2sfd <fd> <clib protos> -o x.sfd` then `sfdc --target=m68k-amigaos --mode=macros|proto`.
 - The Amiga-side tools (`client`, `s2stat`) are linked against libnix (`-noixemul`), not the toolchain's default newlib. They run on the shell's default 4 KB stack with no stack swap: their own call chains measure about 1.2 KB at most, so keep large buffers on the heap, not the stack.
 - Driver sources live in `src/ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
@@ -34,12 +34,12 @@ cd src/Tools/macOS && make -f Makefile.server   # host-side test server -> src/T
 
 There are no automated tests; nothing can be run on the host except the server. Testing needs real Amiga hardware (or an emulator with an RTL8029) and is manual — see `TEST_PROCEDURE.md`:
 
-1. Run `src/Tools/macOS/server` on the host (listens for the Amiga, prints its IPs).
-2. Copy `bin/openpci-rtl8029.device` to `DEVS:Networks/` and `bin/client` to the Amiga, then run `client SERVERIP <ip>`.
+1. Run `make server`, then `bin/macOS/server` on the host (listens for the Amiga, prints its IPs).
+2. Copy `bin/AmigaOS/openpci-rtl8029.device` to `DEVS:Networks/` and `bin/AmigaOS/client` to the Amiga, then run `client SERVERIP <ip>`.
 
 The user runs the Amiga side and pastes back results (the `output*.txt` files in the repo root are such captures). After changing the driver, a successful `make` is the only verification available locally — say so rather than claiming a fix works.
 
-Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `bin/openpci-rtl8029.adf` (volume `OpenPCI`) from scratch with xdftool. Never update files inside an existing image: doing that with ADFMaster 3 produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic).
+Files reach the Amiga on a floppy image: `make RELEASE=1 adf` builds `dist/openpci-rtl8029.adf` (volume `OpenPCI`) from scratch with xdftool. Never update files inside an existing image: doing that with ADFMaster 3 produced corrupt copies of the right size, which the Amiga rejects with "bad loadfile hunk". That error is therefore a transfer problem first, not a build problem (builds are deterministic).
 
 Diagnosing on the real machine:
 

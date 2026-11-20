@@ -42,60 +42,107 @@ STRIPFLAGS =
 TOOL_CFLAGS  = $(CFLAGS) -noixemul
 TOOL_LDFLAGS = -noixemul
 
+# Build output: objects per platform and configuration, executables per platform
+ifeq ($(RELEASE),1)
+	CONFIG = release
+else
+	CONFIG = debug
+endif
+ifeq ($(PERF),1)
+	CONFIG := $(CONFIG)-perf
+endif
+
+AMIGA_OBJ = obj/AmigaOS/$(CONFIG)
+AMIGA_BIN = bin/AmigaOS
+HOST_OBJ  = obj/macOS
+HOST_BIN  = bin/macOS
+DIST      = dist
+
+# The executables in bin/ do not say which configuration built them. Record it, so that
+# switching configuration relinks them even when that configuration's objects are older.
+CONFIG_STAMP = $(AMIGA_BIN)/.config
+ifeq ($(filter clean distclean server,$(MAKECMDGOALS)),)
+$(shell mkdir -p $(AMIGA_BIN) && (echo $(CONFIG) | cmp -s - $(CONFIG_STAMP) || echo $(CONFIG) > $(CONFIG_STAMP)))
+endif
+
 # Add your source files here, do not include the "src/ne2000/" folder name this script will automatically include that
 SRCS = driver.c __divsi3.c __udivsi3.c header.s
-OBJS = $(addprefix obj/,$(SRCS:%=%.o))
-DEPS = $(OBJS:.o=.d)
+OBJS = $(addprefix $(AMIGA_OBJ)/ne2000/,$(SRCS:%=%.o))
 
-# Client source files
-CLIENT_SRCS = src/Tools/AmigaOS/client.c
-CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
+CLIENT_OBJS = $(AMIGA_OBJ)/Tools/client.o
+STAT_OBJS   = $(AMIGA_OBJ)/Tools/s2stat.o
+DEPS = $(OBJS:.o=.d) $(CLIENT_OBJS:.o=.d) $(STAT_OBJS:.o=.d)
 
-.PHONY: all driver client s2stat adf clean
-all: bin/$(TARGET) bin/$(CLIENT_TARGET) bin/$(STAT_TARGET)
-s2stat: bin/$(STAT_TARGET)
-driver: bin/$(TARGET)
-client: bin/$(CLIENT_TARGET)
-adf: bin/$(ADF_TARGET)
+# Host-side test server, built with the host compiler
+HOST_CC     = cc
+HOST_CFLAGS = -Wall -Wextra -O2
+SERVER_OBJS = $(HOST_OBJ)/Tools/server.o
+
+.PHONY: all driver client s2stat server adf clean distclean
+all: $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET)
+driver: $(AMIGA_BIN)/$(TARGET)
+client: $(AMIGA_BIN)/$(CLIENT_TARGET)
+s2stat: $(AMIGA_BIN)/$(STAT_TARGET)
+server: $(HOST_BIN)/server
+adf: $(DIST)/$(ADF_TARGET)
 
 -include $(DEPS)
 
-obj/%.c.o: src/ne2000/%.c
+# Fallback for "make clean all", where the stamp is not written above
+$(CONFIG_STAMP):
+	@mkdir -p $(dir $@)
+	@echo $(CONFIG) > $@
+
+$(AMIGA_OBJ)/ne2000/%.c.o: src/ne2000/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-obj/%.s.o: src/ne2000/%.s
+$(AMIGA_OBJ)/ne2000/%.s.o: src/ne2000/%.s
 	@mkdir -p $(dir $@)
 	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(CFLAGS) $<
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-bin/$(TARGET): $(OBJS)
+$(AMIGA_OBJ)/Tools/%.o: src/Tools/AmigaOS/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(LDFLAGS) -o $@.debug $^ $(LIBS)
+	$(CC) -MM -MP -MT $(@:.o=.d) -MT $@ -MF $(@:.o=.d) $(TOOL_CFLAGS) $<
+	$(CC) $(TOOL_CFLAGS) -c -o $@ $<
+
+$(AMIGA_BIN)/$(TARGET): $(OBJS) $(CONFIG_STAMP)
+	@mkdir -p $(dir $@)
+	$(CC) $(LDFLAGS) -o $@.debug $(OBJS) $(LIBS)
 	$(STRIP) $(STRIPFLAGS) -o $@ $@.debug
 
-bin/$(CLIENT_TARGET): $(CLIENT_OBJS)
+$(AMIGA_BIN)/$(CLIENT_TARGET): $(CLIENT_OBJS) $(CONFIG_STAMP)
 	@mkdir -p $(dir $@)
-	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $^ -lm
+	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(CLIENT_OBJS) -lm
 
-bin/$(STAT_TARGET): src/Tools/AmigaOS/s2stat.o
+$(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP)
 	@mkdir -p $(dir $@)
-	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $^ -lm
+	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
 # Floppy image with the driver and the tools for copying to the real machine. Always built
 # from scratch: replacing files inside an existing image has produced corrupt copies.
-bin/$(ADF_TARGET): bin/$(TARGET) bin/$(CLIENT_TARGET) bin/$(STAT_TARGET)
+$(DIST)/$(ADF_TARGET): $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET)
+	@mkdir -p $(dir $@)
 	rm -f $@
 	$(XDFTOOL) $@ format $(ADF_VOLUME) \
-		+ write bin/$(TARGET) \
-		+ write bin/$(CLIENT_TARGET) \
-		+ write bin/$(STAT_TARGET)
+		+ write $(AMIGA_BIN)/$(TARGET) \
+		+ write $(AMIGA_BIN)/$(CLIENT_TARGET) \
+		+ write $(AMIGA_BIN)/$(STAT_TARGET)
 	$(XDFTOOL) $@ list
 
-%.o: %.c
-	$(CC) $(TOOL_CFLAGS) -c -o $@ $<
+$(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c
+	@mkdir -p $(dir $@)
+	$(HOST_CC) $(HOST_CFLAGS) -c -o $@ $<
 
+$(HOST_BIN)/server: $(SERVER_OBJS)
+	@mkdir -p $(dir $@)
+	$(HOST_CC) -o $@ $^
+
+# Leaves dist/ alone: a built release image survives a clean
 clean:
 	rm -rf bin obj
-	rm -f $(CLIENT_OBJS) src/Tools/AmigaOS/s2stat.o
+
+distclean: clean
+	rm -rf $(DIST)

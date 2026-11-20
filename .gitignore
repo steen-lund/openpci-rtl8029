@@ -1,6 +1,5 @@
 .DS_Store
 obj
 bin
-*.o
-src/Tools/macOS/server
+dist
 rtl_8029pci.device
