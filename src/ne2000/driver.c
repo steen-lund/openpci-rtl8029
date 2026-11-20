@@ -154,7 +154,7 @@ enum
     /* Unit task and card setup */
     DG_TASKSTATE,     /* what the unit task is doing, TS_* */
     DG_TASKPRI,       /* priority of the unit task */
-    DG_MMUINHIBIT,    /* 1 if the card registers are cache-inhibited through mmu.library */
+    DG_MMUINHIBIT,    /* 1 if mmu.library reports the card registers mapped cache-inhibited */
     DG_RTLCONFIG,     /* RTL8029 CONFIG0, CONFIG2, CONFIG3 (low byte); $40 in CONFIG3 = full duplex */
 
     /* Requests from the stack */
@@ -402,7 +402,7 @@ struct UnitData
     BYTE ud_ServiceBit;
     UBYTE ud_Unit;       /* unit number, index into dd_Units[] */
     UBYTE ud_IntMasked;  /* card interrupts masked by us; only decides IntCode()'s return value */
-    UBYTE ud_UseMMUCacheInhibit;  /* TRUE if the registers are cache-inhibited: no barriers needed */
+    UBYTE ud_RegsUncached;       /* registers mapped cache-inhibited: the barriers do nothing */
 #ifdef PDEBUG
     BPTR debug;
 #endif
@@ -517,7 +517,7 @@ static inline void hw_write_barrier(volatile struct Ne2000 *hw, struct UnitData 
     struct Library *SysBase;
 
     /* Nothing to do if the registers are mapped cache-inhibited */
-    if (ud->ud_UseMMUCacheInhibit)
+    if (ud->ud_RegsUncached)
         return;
 
     /* Otherwise flush the data cache over the registers */
@@ -533,7 +533,7 @@ static inline void hw_read_barrier(volatile struct Ne2000 *hw, struct UnitData *
     struct Library *SysBase;
 
     /* Nothing to do if the registers are mapped cache-inhibited */
-    if (ud->ud_UseMMUCacheInhibit)
+    if (ud->ud_RegsUncached)
         return;
 
     /* Otherwise flush the data cache over the registers */
@@ -1187,7 +1187,7 @@ struct UnitData *InitializeUnit(struct DevData *dd, LONG unit)
             ud->ud_RxBuffer = (UWORD *)FRAME_START(ud->ud_RxSpace);
 
             /* Cache barriers are only needed if the registers are not cache-inhibited already */
-            ud->ud_UseMMUCacheInhibit = hw_is_cache_inhibited(ud);
+            ud->ud_RegsUncached = hw_is_cache_inhibited(ud);
 
             HardwareReset(ud);
             HardwareInit(ud);
@@ -1399,7 +1399,7 @@ void S2GetSpecialStats(struct UnitData *ud, struct IOSana2Req *req)
 
     DIAG(DG_TXPENDING) = (ud->ud_TxReq[0] ? 1 : 0) + (ud->ud_TxReq[1] ? 1 : 0);
     DIAG(DG_NEXTPAGE) = ud->ud_NextPage;
-    DIAG(DG_MMUINHIBIT) = ud->ud_UseMMUCacheInhibit ? 1 : 0;
+    DIAG(DG_MMUINHIBIT) = ud->ud_RegsUncached ? 1 : 0;
 #if PERF_TIMING
     {
         USE_U(TimerBase)
