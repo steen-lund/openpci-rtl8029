@@ -1,0 +1,7 @@
+{
+    // Other settings...
+    "[makefile]": {
+        "editor.insertSpaces": false,
+        "editor.tabSize": 4
+    }
+}
