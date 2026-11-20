@@ -1,3 +1,10 @@
+/*
+ * client - Amiga side of the openpci-rtl8029.device network test
+ *
+ * Copyright (c) 2025-2026 Steen Lund
+ * SPDX-License-Identifier: MIT (see licenses/MIT.txt)
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

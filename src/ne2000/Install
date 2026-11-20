@@ -1,6 +1,8 @@
 ;NE2000 Ethernet driver install script
 ;Grzegorz "Krashan" Kraszewski
 ;$VER: Ne2000 install 0.21 (9.9.2001)
+;Modified 2024 by Steen Lund for openpci-rtl8029.device (card search message)
+;SPDX-License-Identifier: GPL-2.0-or-later
 
 (complete 0)
 

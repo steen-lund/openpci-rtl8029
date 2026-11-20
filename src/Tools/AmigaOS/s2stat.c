@@ -5,6 +5,9 @@
  * Opens the device non-exclusively next to the TCP/IP stack and issues
  * S2_GETSPECIALSTATS. The driver answers this in the caller's context, so it
  * works even when the driver's unit task is stuck.
+ *
+ * Copyright (c) 2026 Steen Lund
+ * SPDX-License-Identifier: MIT (see licenses/MIT.txt)
  */
 
 #include <stdio.h>

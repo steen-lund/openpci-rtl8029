@@ -8,6 +8,8 @@ A SANA-II network device driver (`openpci-rtl8029.device`) for RTL8029 (NE2000-c
 
 The repo also contains a TCP client/server pair used to exercise the driver end to end.
 
+Licensing (details in `README.md`): the driver in `src/ne2000/` is GPL-2.0-or-later, with Matay's original condition that it not be included in a commercial product (`licenses/matay-prm-rtl8029.txt`, keep unchanged). The tools in `src/Tools/` are MIT. Source files carry an `SPDX-License-Identifier` line; new files get the header of their part, and driver files keep both copyright lines (Matay/Kraszewski and Steen Lund).
+
 ## Build
 
 Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (path is hard-coded in `makefile` as `TOOLPREFIX`).

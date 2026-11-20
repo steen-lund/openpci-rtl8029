@@ -1,4 +1,17 @@
-/* OpenPCI NE2000 driver. */
+/*
+ * openpci-rtl8029.device - SANA-II driver for RTL8029 PCI Ethernet cards via openpci.library
+ *
+ * Copyright (C) 2001-2004 Matay; written by Grzegorz Kraszewski as prm-rtl8029.device
+ * Copyright (C) 2024-2026 Steen Lund
+ *
+ * Modified by Steen Lund from 2024: ported to openpci.library and largely rewritten. The git
+ * history records each change and its date.
+ *
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ * Matay's original release also forbids including the driver in a commercial product; see
+ * README.md and licenses/matay-prm-rtl8029.txt.
+ */
+
 /// includes and defines
 
 // ignore that STRPTR is unsigned char *, but all string literals are char *
