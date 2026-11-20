@@ -20,27 +20,24 @@
 #define __NOLIBBASE__
 
 #include <proto/exec.h>
-#include <proto/expansion.h>
 #include <proto/utility.h>
 #include <proto/dos.h>
 #include <proto/openpci.h>
 #include <proto/timer.h>
+#include <exec/execbase.h>
 #include <exec/libraries.h>
 #include <exec/resident.h>
 #include <exec/memory.h>
 #include <exec/interrupts.h>
 #include <devices/sana2.h>
-#include <hardware/intbits.h>
+#include <devices/newstyle.h>
 #include <dos/dostags.h>
 #include <libraries/pcitags.h>
 #include <utility/tagitem.h>
 #include <libraries/openpci.h>
 
-/*#include <faststring.h>*/ /* Probably used for strcpy */
-
 #include "rev.h"
 #include "ne2000.h"
-// #include "endian.h"  Not needed, endian swapping is also declared by openpci.h
 
 /* mmu.library for cache-inhibited hardware mapping */
 struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
@@ -71,9 +68,6 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 /* m68k compilers only guarantee word alignment, even for longword arrays: round up first */
 #define FRAME_START(space) ((UBYTE *)((((ULONG)(space)) + 3) & ~3UL) + FRAME_ALIGN)
 #define DMAPORT_LONG(ne) ((ne)->DMAPortLong)
-
-/* Cache control flags for hardware I/O */
-#define CACRF_ClearD    (1UL<<11)  /* Clear data cache */
 
 /* PCI card ID's */
 
@@ -152,21 +146,6 @@ struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #define INIT_DBG1(a,b) KPrintF(a "\n",(LONG)b)
 #define INIT_DBG_U(a) KPrintF(a "\n")
 #define INIT_DBG1_U(a,b) KPrintF(a "\n",(LONG)b)
-
-// New Style Device support
-
-#define NSCMD_DEVICEQUERY 0x4000
-
-struct NSDeviceQueryResult
-{
-    ULONG DevQueryFormat;     /* this is type 0               */
-    ULONG SizeAvailable;      /* bytes available              */
-    UWORD DeviceType;         /* what the device does         */
-    UWORD DeviceSubType;      /* depends on the main type     */
-    UWORD *SupportedCommands; /* 0 terminated list of cmd's   */
-};
-
-#define NSDEVTYPE_SANA2 7 /* A >=SANA2R2 networking device */
 
 ///
 /// diagnostics
@@ -1411,12 +1390,12 @@ void CmdNSDQuery(struct UnitData *ud, struct IOStdReq *req)
     {
         if ((qdata = (struct NSDeviceQueryResult *)req->io_Data))
         {
-            if ((qdata->DevQueryFormat == 0) && (qdata->SizeAvailable == 0))
+            if ((qdata->nsdqr_DevQueryFormat == 0) && (qdata->nsdqr_SizeAvailable == 0))
             {
-                qdata->SizeAvailable = sizeof(struct NSDeviceQueryResult);
-                qdata->DeviceType = NSDEVTYPE_SANA2;
-                qdata->DeviceSubType = 0;
-                qdata->SupportedCommands = NSDSupported;
+                qdata->nsdqr_SizeAvailable = sizeof(struct NSDeviceQueryResult);
+                qdata->nsdqr_DeviceType = NSDEVTYPE_SANA2;
+                qdata->nsdqr_DeviceSubType = 0;
+                qdata->nsdqr_SupportedCommands = NSDSupported;
                 req->io_Actual = sizeof(struct NSDeviceQueryResult);
             }
             else
