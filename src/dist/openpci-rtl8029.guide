@@ -1,0 +1,422 @@
+@database openpci-rtl8029.guide
+@$VER: openpci-rtl8029.guide 2.0 (21.11.2026)
+@author "Steen Lund"
+@(c) "2001-2004 Matay, 2024-2026 Steen Lund"
+
+@node Main "openpci-rtl8029.device"
+
+                         openpci-rtl8029.device
+
+  A SANA-II network driver for RTL8029 (NE2000 compatible) PCI Ethernet
+  cards on classic AmigaOS, using openpci.library. It works with Roadshow
+  and other SANA-II TCP/IP stacks.
+
+     @{" Installation    " link Install}  requirements and how to install
+     @{" The driver      " link Driver}  units and the task priority setting
+     @{" client          " link Client}  end-to-end network test and benchmark
+     @{" s2stat          " link S2stat}  the driver's diagnostic counters
+     @{" License         " link License}  copyright, license and source code
+
+@endnode
+
+@node Install "Installation"
+
+  Installation
+
+  The driver needs openpci.library from the openpci package (Aminet
+  driver/other/openpci68k.lha), which supports several PCI bridges.
+
+  Double-click the Install icon to run the installer. It checks for the
+  card with the lspci command of the openpci package and copies the
+  driver to DEVS:Networks/. It can also remove the driver again.
+
+  To install by hand, copy Devs/Networks/openpci-rtl8029.device to
+  DEVS:Networks/.
+
+  Then set up an interface for it in your TCP/IP stack. The device name is
+  openpci-rtl8029.device and the first card is unit 0. For Roadshow, the
+  interface file in DEVS:NetInterfaces/ names them like this:
+
+      device=openpci-rtl8029.device
+      unit=0
+
+  The tools client and s2stat are in the C drawer of the distribution.
+  They are not needed for normal use.
+
+@endnode
+
+@node Driver "The driver"
+
+  The driver
+
+  Units
+
+  Each RTL8029 card is one unit, numbered from 0 in the order openpci
+  finds the cards. Up to 4 cards are supported. A TCP/IP stack that opens
+  a unit exclusively, as Roadshow does, has it to itself; @{"s2stat" link S2stat}
+  can still look at it.
+
+  Running openpci-rtl8029.device from a Shell does nothing.
+
+  Task priority
+
+  Each unit has a task that does all the packet work. The card can only
+  hold about 10 ms of incoming traffic, so this task must get the CPU
+  quickly whenever the card has something; otherwise packets are lost.
+  It runs at priority 6 by default, above normal programs.
+
+  If packets are lost while the machine is busy, a higher priority can
+  help. The environment variable openpci-rtl8029.pri overrides it, from
+  -20 to 60. SAVE keeps the setting after a reboot:
+
+      SetEnv SAVE openpci-rtl8029.pri 10
+
+  It is read when a unit starts, so restart the network afterwards (for
+  Roadshow: NetShutdown, then AddNetInterface with your interface name).
+  Older shells (AmigaOS 3.1) have no SAVE switch: set the variable
+  without it, then copy it to ENVARC: yourself:
+
+      Copy ENV:openpci-rtl8029.pri ENVARC:
+
+  @{"s2stat" link S2stat} shows the priority in use as TaskPri.
+
+@endnode
+
+@node Client "client"
+
+  client - end-to-end network test
+
+  Usage:   client SERVERIP/A,BENCH/S
+
+      SERVERIP   address of the computer running the test server
+      BENCH      also measure throughput (see below)
+
+  client tests the driver together with a server program on another
+  computer: the server is in the source code (src/Tools/macOS), built
+  with "make server". Start the server first; it prints its own
+  addresses and waits on TCP and UDP port 10203. It serves one run of
+  client and then exits, so start it again for every run.
+
+  client then goes through these steps, printing as it goes:
+
+  1. Handshake. "Connected!" and "Received handshake: Hello, Client!".
+
+  2. Receive test. The server sends 14 packets of 64 to 4096 bytes, odd
+     and even sizes. For each, client prints the size and either
+     "OK: Pattern verified" or the error found. The "DEBUG:" lines show
+     the length announced by the server and the first bytes received.
+     Ends with "RX test complete: 14 packets received, 0 errors".
+
+  3. Send test. client sends the same 14 sizes back; each is checked by
+     the server, which answers "RX-ACK:n". Ends with "TX test complete".
+
+  4. Byte order test. A 22-byte structure of mixed field sizes goes each
+     way and is checked field by field: "PASSED" or "FAILED" for each
+     direction.
+
+  5. Frame size test. UDP datagrams that fill exactly one Ethernet frame,
+     from the shortest (60 bytes) to the longest (1514 bytes), are echoed
+     by the server. Each size is tried up to 3 times and prints:
+
+         OK            the echo came back unchanged
+         LOST          no echo within 2 seconds, 3 times
+         echo differs  an echo came back damaged
+
+     The TCP steps above cannot catch frames of one size getting lost,
+     because TCP resends them or uses smaller ones. This step can: a
+     LOST near 1514 bytes means full-size frames do not get through.
+
+  6. Benchmark, with BENCH only. The server sends 4 MB, then client sends
+     4 MB back, with no disk involved:
+
+         Receive: 760 KB/s (5.3 s)
+         Send:    950 KB/s (4.3 s)
+
+     The time is measured in 1/50 s. Results vary by up to about 10%
+     between runs, so compare several. Transfers through the network
+     between the two computers also count: a lossy cable or switch shows
+     up as lower and more variable figures.
+
+  The last line sums up the errors of the receive, send and frame size
+  tests. client returns 0 if everything passed, 1 otherwise.
+
+@endnode
+
+@node S2stat "s2stat"
+
+  s2stat - the driver's diagnostic counters
+
+  Usage:   s2stat [unit]
+
+  s2stat prints the counters and state the driver keeps for one unit
+  (default 0). It can run while the TCP/IP stack has the unit open, and
+  it works even when the driver's task is stuck. Run it twice, a few
+  seconds apart, and compare: most values count up from when the unit
+  was started.
+
+  Every line shows the name, the value in decimal and in hexadecimal, and
+  sometimes an explanation. The counters come in groups:
+
+     @{" Unit task and card setup  " link S2Unit}
+     @{" Requests from the stack   " link S2Requests}
+     @{" Interrupts and card state " link S2Card}
+     @{" Receive                   " link S2Rx}
+     @{" Receive errors            " link S2RxErr}
+     @{" Transmit                  " link S2Tx}
+     @{" Transmit errors           " link S2TxErr}
+     @{" Receive checksums         " link S2Sums}
+     @{" Timing                    " link S2Timing}
+
+  The last two are only filled in by drivers built for diagnosis; with
+  the normal driver they show a single line saying so. Counters s2stat
+  does not know (from a newer driver) are listed under "Other".
+
+  On a healthy unit all error counters stay at 0, except TxCollisions,
+  which is normal on a half-duplex network.
+
+@endnode
+
+@node S2Unit "s2stat: Unit task and card setup"
+
+  Unit task and card setup
+
+  TaskState   What the unit's task is doing right now:
+                0  waiting       nothing to do (the normal state)
+                1  handling requests from the TCP/IP stack
+                2  servicing card, after an interrupt
+                3  reading ring, taking received packets off the card
+                4  sending packet, copying a packet to the card
+                5  overflow recovery, after the card ran full
+              A unit that stays in a state other than 0 is stuck there.
+
+  TaskPri     Priority of the unit's task, see @{"The driver" link Driver}.
+
+  MMUInhibit  1 if mmu.library reports the card's registers as not cached
+              (normal with openpci). 0 means they could not be checked or
+              are cached; the driver then flushes the data cache around
+              every register access, which is slower.
+
+  RtlConfig   The RTL8029's configuration registers, one byte each:
+              $00aabbcc with aa = CONFIG0, bb = CONFIG2, cc = CONFIG3.
+              $40 in CONFIG3 means the card runs full duplex.
+
+@endnode
+
+@node S2Requests "s2stat: Requests from the stack"
+
+  Requests from the stack
+
+  ReadsQueued    Read requests received: the TCP/IP stack hands the
+                 driver empty requests, which received packets fill.
+
+  WritesQueued   Packets the TCP/IP stack asked the driver to send.
+
+@endnode
+
+@node S2Card "s2stat: Interrupts and card state"
+
+  Interrupts and card state
+
+  Interrupts     Interrupts the card raised. The PCI interrupt line is
+                 shared with other cards; only the card's own count.
+
+  ServiceRuns    Times the driver's task handled the card's events.
+                 Usually close to Interrupts.
+
+  IntSeen        Every interrupt cause the card has reported, one bit
+                 each:
+                   $01 packet received      $10 receive ring full
+                   $02 packet sent          $20 error tallies half full
+                   $04 receive error        $40 data transfer complete
+                   $08 send error           $80 card reset (stopped)
+
+  LastIntStatus  The interrupt causes the last time there were any, with
+                 the same bits.
+
+  NextPage       Where the driver reads the next packet from the card's
+  LastCurrent    receive ring, and where the card writes the next one
+                 (as last read). Both are 256-byte pages from $4C to $7F;
+                 when they are equal the ring is empty.
+
+  TxPending      Packets on the card waiting to be sent or being sent,
+                 0 to 2.
+
+@endnode
+
+@node S2Rx "s2stat: Receive"
+
+  Receive
+
+  RxFrames       Packets taken from the card.
+
+  RxDelivered    Packets passed on to the TCP/IP stack.
+
+  RxNoReader     Packets dropped because the stack had not asked for that
+                 kind of packet, for example IPv6 on an IPv4-only setup.
+                 Normal, as long as the useful traffic gets through.
+
+  LastDropType   The kind (Ethernet type) of the last packet dropped that
+                 way: $0800 IPv4, $0806 ARP, $86DD IPv6.
+
+  RxWrapped      Packets the card stored across the end of its receive
+                 ring, continuing at the start. Normal.
+
+@endnode
+
+@node S2RxErr "s2stat: Receive errors"
+
+  Receive errors
+
+  Overflows      Times the card's receive ring ran full. Packets that
+                 arrive while it is full are lost. The driver's task did
+                 not get the CPU in time: see the task priority in
+                 @{"The driver" link Driver}.
+
+  RxMissed       Packets the card could not store (ring full, or the card
+                 stopped during recovery).
+
+  RxCrcErrors    Packets damaged on the wire, dropped by the card: look at
+                 the cable, the switch port and the duplex settings.
+
+  RxAlignErrors  Packets with a broken length on the wire, dropped by the
+                 card. Same causes as CRC errors.
+
+  RxErrInts      Times the card reported a receive error.
+
+  LastRxStatus   The card's receive status after the last of those:
+                   $01 received fine        $10 missed (ring full)
+                   $02 CRC error            $20 multicast/broadcast
+                   $04 alignment error      $40 receiver disabled
+                   $08 FIFO overrun         $80 deferring
+
+  RxBadHeader    Corrupt packet headers in the card's ring. The driver
+                 then throws away the ring's contents. Should never
+                 happen; please report it.
+
+  LastBadHeader  The last such header: status, next page and length,
+                 one byte each from the right ($LLLLNNSS).
+
+@endnode
+
+@node S2Tx "s2stat: Transmit"
+
+  Transmit
+
+  TxStarted      Packets copied to the card for sending.
+
+  TxDone         Packets the card reports as sent.
+
+  TxWireIdle     Times the card finished sending with no next packet
+                 ready, so the cable went quiet for a moment.
+
+  TxIdleMsgWait  The part of those where the stack had already handed
+                 over the next packet but the driver had not copied it to
+                 the card yet. High values mean the driver's task was
+                 kept from running.
+
+  TxWaitPolls    Status reads spent waiting for the card to accept
+                 copied packets, in total. Grows with TxStarted.
+
+@endnode
+
+@node S2TxErr "s2stat: Transmit errors"
+
+  Transmit errors
+
+  TxErrors       Packets the card failed to send.
+
+  TxCollisions   Collisions while sending. The card retries, so these are
+                 not lost. Normal on half-duplex networks.
+
+  TxLateColl     Collisions late in a packet. A typical sign of a duplex
+                 mismatch: the switch port runs full duplex, the card
+                 half duplex. Set the port to auto or half duplex.
+
+  TxCarrierLost  Packets during which the link was lost: look at the
+                 cable.
+
+  TxNoPending    Send interrupts with no packet being sent. Should stay 0.
+
+  TxDmaTimeout   Times the card did not confirm a copied packet. Should
+                 stay 0.
+
+@endnode
+
+@node S2Sums "s2stat: Receive checksums"
+
+  Receive checksums
+
+  These are only counted by a driver built with RX_VERIFY_CHECKSUMS set
+  to 1 in the source, for diagnosis. It then checks the IP, ICMP, UDP and
+  TCP checksums of every received IPv4 packet.
+
+  RxSumChecked   Packets checked.
+
+  RxSumBad       Packets that failed: they were damaged while being read
+                 from the card (the card already checked them on the
+                 wire).
+
+  RxSumBadWrap   The part of those that were stored across the end of
+                 the card's ring.
+
+  LastSumBad     The last damaged packet: its ring page and length
+                 ($PPPPLLLL).
+
+  RxEchoReq      Pings received, to compare with the number sent.
+
+@endnode
+
+@node S2Timing "s2stat: Timing"
+
+  Timing
+
+  These are only measured by a driver built with "make PERF=1", for
+  diagnosis. Measuring costs time on every packet, so that driver is
+  slower than the normal one.
+
+  EClockFreq      The unit of the Ticks values: E-clock ticks per second.
+
+  TicksService    Time the driver's task spent handling the card. Behind
+  TicksRxRead     each Ticks value s2stat prints the total in ms and the
+  TicksRxCopy     average per received packet. RxRead is reading packets
+                  off the card, RxCopy handing them to the stack.
+
+  TicksTx         Time spent preparing packets for sending, with the
+  TicksTxCopy     average per sent packet: TxCopy is the stack copying
+  TicksTxUpload   the packet to the driver, TxUpload the driver copying
+  TicksTxWait     it to the card, TxWait waiting for the card to confirm.
+
+  TicksIntLat     Time from the card's interrupt until the driver's task
+                  got to it, with the average per interrupt.
+
+  MaxTicksIntLat  The longest of those waits, in microseconds.
+  SlowIntLat      How many of them took more than 2 ms.
+
+  MaxTicksTurn    The longest time from passing a received packet to the
+  SlowTurn        stack to the stack's next send request, and how often
+                  it took more than 5 ms.
+
+@endnode
+
+@node License "License"
+
+  License
+
+  The driver:
+    Copyright (C) 2001-2004 Matay; written by Grzegorz Kraszewski as
+    prm-rtl8029.device
+    Copyright (C) 2024-2026 Steen Lund
+
+    Free software under the GNU General Public License, version 2 or
+    (at your option) any later version. Matay's original release also
+    states that the driver may not be included in a commercial product.
+
+  client and s2stat:
+    Copyright (C) 2025-2026 Steen Lund, MIT license.
+
+  The license texts are in the Licenses drawer. This software comes with
+  ABSOLUTELY NO WARRANTY.
+
+  Source code: https://github.com/steen-lund/openpci-rtl8029
+
+@endnode

@@ -134,23 +134,24 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
-# Distribution layout, shared by the floppy image and the LhA archive: the installer, ReadMe
-# and Licenses at the root, the driver in Devs/Networks and the tools in C, like the system
+# Distribution layout, shared by the floppy image and the LhA archive: the installer, guide,
+# ReadMe and Licenses at the root, the driver in Devs/Networks and the tools in C, like the system
 # directories. It is staged in obj/dist/$(DIST_NAME) and both archives are made from that tree.
 DIST_NAME  = openpci-rtl8029
 STAGE      = obj/dist/$(DIST_NAME)
 INSTALL_FILES = src/ne2000/Install src/ne2000/Install.info
+DOC_FILES   = src/dist/openpci-rtl8029.guide src/dist/openpci-rtl8029.guide.info
 # The GPL requires the license and the way to the source to travel with the binaries
 DIST_LICENSES = LICENSE licenses/MIT.txt licenses/matay-prm-rtl8029.txt
 DIST_INPUTS = $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) \
-              $(INSTALL_FILES) src/dist/ReadMe $(DIST_LICENSES)
+              $(INSTALL_FILES) $(DOC_FILES) src/dist/ReadMe $(DIST_LICENSES)
 
 $(STAGE): $(DIST_INPUTS) $(THIS_MAKEFILE)
 	rm -rf $@
 	mkdir -p $@/C $@/Devs/Networks
 	cp $(AMIGA_BIN)/$(TARGET) $@/Devs/Networks/
 	cp $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $@/C/
-	cp $(INSTALL_FILES) src/dist/ReadMe $@/
+	cp $(INSTALL_FILES) $(DOC_FILES) src/dist/ReadMe $@/
 	mkdir -p $@/Licenses
 	cp LICENSE $@/Licenses/GPL-2.0.txt
 	cp licenses/MIT.txt $@/Licenses/MIT.txt

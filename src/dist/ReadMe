@@ -7,9 +7,10 @@ on classic AmigaOS (m68k), using openpci.library.
 Contents
 
   Install                               installer, double-click to run
+  openpci-rtl8029.guide                 documentation (driver, tools)
   Devs/Networks/openpci-rtl8029.device  the driver
   C/client                              network test client
-  C/s2stat                              prints the driver's counters
+  C/s2stat                              shows the driver's counters
   Licenses/                             license texts
 
 Requirements

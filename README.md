@@ -39,7 +39,8 @@ Installer SCRIPT Install APPNAME openpci-rtl8029.device
 
 The installer copies the driver to `DEVS:Networks/`, or removes it. It checks for the card
 with the `lspci` command of the openpci package; if `lspci` cannot be run, it says so and
-installs anyway. To install by hand, copy `Devs/Networks/openpci-rtl8029.device` from the disk
+installs anyway. The disk also carries `openpci-rtl8029.guide`, the user documentation (driver
+settings, the test client and `s2stat`). To install by hand, copy `Devs/Networks/openpci-rtl8029.device` from the disk
 to `DEVS:Networks/`. The disk's `C` directory holds the test client and `s2stat`.
 
 ## License
