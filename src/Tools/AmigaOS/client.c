@@ -178,8 +178,6 @@ int main(void)
 
         size_t expected_size = ntohl(net_size);
 
-        printf("DEBUG: Read length prefix: 0x%08lX -> %zu bytes\n", (unsigned long)net_size, expected_size);
-
         if (expected_size > BUFFER_SIZE - 1) {
             printf("Packet too large: %zu bytes\n", expected_size);
             errors++;
@@ -204,12 +202,6 @@ int main(void)
 
         packet_num++;
         buffer[total_read] = '\0';
-
-        printf("DEBUG: Received %zu bytes, first 20: ", total_read);
-        for (size_t i = 0; i < 20 && i < total_read; i++) {
-            printf("%02X ", (unsigned char)buffer[i]);
-        }
-        printf("\n");
 
         // Parse size from header to verify
         size_t header_size = 0;

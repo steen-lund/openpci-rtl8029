@@ -103,9 +103,8 @@
 
   2. Receive test. The server sends 14 packets of 64 to 4096 bytes, odd
      and even sizes. For each, client prints the size and either
-     "OK: Pattern verified" or the error found. The "DEBUG:" lines show
-     the length announced by the server and the first bytes received.
-     Ends with "RX test complete: 14 packets received, 0 errors".
+     "OK: Pattern verified" or the error found. Ends with
+     "RX test complete: 14 packets received, 0 errors".
 
   3. Send test. client sends the same 14 sizes back; each is checked by
      the server, which answers "RX-ACK:n". Ends with "TX test complete".
