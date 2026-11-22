@@ -2125,6 +2125,16 @@ void TransmitBuffer(struct UnitData *ud, WORD slot)
     ud->ud_TxActive = slot;
 }
 ///
+/// PrintEtherAddress()
+
+/* Serial output of a station address on one line, as 00:80:AD:90:3E:0A */
+static void PrintEtherAddress(const char *label, const UBYTE *a)
+{
+    KPrintF("%s %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", (LONG)label, (LONG)a[0], (LONG)a[1],
+            (LONG)a[2], (LONG)a[3], (LONG)a[4], (LONG)a[5]);
+}
+
+///
 /// GetHwAddress()
 
 void GetHwAddress(struct UnitData *ud)
@@ -2140,10 +2150,7 @@ void GetHwAddress(struct UnitData *ud)
     for (i = 0; i < ETHER_ADDR_LEN; i++)
         ud->ud_EtherAddress[i] = hw->DMAPort;
 
-    /* Always display hardware address on initialization */
-    INIT_DBG_U("Hardware address (read):");
-    for (i = 0; i < ETHER_ADDR_LEN; i++)
-        INIT_DBG1_U("\t%02lx", ud->ud_EtherAddress[i]);
+    PrintEtherAddress("Hardware address (read):", ud->ud_EtherAddress);
 
     return;
 }
@@ -2157,9 +2164,7 @@ void WriteHwAddress(struct UnitData *ud)
     WORD i;
 
 #ifdef PDEBUG
-    DBG_U("\thardware address (write):");
-    for (i = 0; i < ETHER_ADDR_LEN; i++)
-        DBG1_U("\t%02lx", ud->ud_SoftAddress[i]);
+    PrintEtherAddress("Hardware address (write):", ud->ud_SoftAddress);
 #endif
 
     hw->regs[NE2000_COMMAND] = COMMAND_PAGE1 | COMMAND_ABORT | COMMAND_STOP;
