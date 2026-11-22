@@ -1,0 +1,110 @@
+# Builds the distributions, tags the commit and publishes a GitHub Release.
+# Manual only: Actions > Release > Run workflow, or gh workflow run release.yml.
+#
+# The version comes from src/ne2000/rev.h (DEV_VERSION.DEV_REVISION); bump it and the date in
+# DEV_IDSTRING, and add a section to src/ne2000/release_notes, before running this. It refuses
+# to run if the tag for that version exists already.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    # Pinned by digest, not tag: tags are mutable, and an upstream rebuild must not silently
+    # change the compiler a release is built with. amigadev/crosstools:m68k-amigaos as of
+    # 2026-11-21 (GCC 16.2.1b, AmigaDev amiga16.2), amd64 image: it includes the openpci and
+    # mmu SDKs, lha and xdftool, and builds the same binaries as the maintainer's toolchain.
+    env:
+      IMAGE: amigadev/crosstools@sha256:7601e475f4a6c349fd65a3a2c8e07a9bb582e85ae6a5db478369e8125c06f156
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Only from main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main, not ${GITHUB_REF}"
+          exit 1
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Read the version
+        id: version
+        run: |
+          rev=src/ne2000/rev.h
+          major=$(sed -n 's/^#define DEV_VERSION[[:space:]]*\([0-9]*\).*/\1/p' "$rev")
+          minor=$(sed -n 's/^#define DEV_REVISION[[:space:]]*\([0-9]*\).*/\1/p' "$rev")
+          date=$(sed -n 's/^#define DEV_IDSTRING.*(\([0-9.]*\)).*/\1/p' "$rev")
+          if [ -z "$major" ] || [ -z "$minor" ] || [ -z "$date" ]; then
+            echo "::error::Could not read the version from $rev"
+            exit 1
+          fi
+          version="$major.$minor"
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag exists already: bump DEV_VERSION/DEV_REVISION in $rev first"
+            exit 1
+          fi
+          echo "Releasing $tag ($date) from $GITHUB_SHA"
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "date=$date"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the distributions
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work "$IMAGE" \
+            make RELEASE=1 TOOLCHAIN=/opt/m68k-amigaos dist
+
+      - name: Release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The section of release_notes for this version: from its heading, "2.0 (date)",
+          # up to the next version heading
+          awk -v v="$VERSION" '
+            /^[0-9]+\.[0-9]+ \(/ { found = ($1 == v); if (found) { print; next } }
+            found
+          ' src/ne2000/release_notes > section.txt
+          if [ ! -s section.txt ]; then
+            echo "::error::No section for $VERSION in src/ne2000/release_notes"
+            exit 1
+          fi
+          # Plain text with hanging indents: keep its layout
+          { echo '```'; cat section.txt; echo '```'; } > notes.md
+          cat notes.md
+
+      - name: Tag and publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          mkdir release
+          cp dist/openpci-rtl8029.adf "release/openpci-rtl8029-$VERSION.adf"
+          cp dist/openpci-rtl8029.lha "release/openpci-rtl8029-$VERSION.lha"
+          flags=""
+          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
+          # Creates the tag on the commit that was built
+          gh release create "$TAG" release/* \
+            --target "$GITHUB_SHA" \
+            --title "openpci-rtl8029.device $VERSION" \
+            --notes-file notes.md \
+            $flags

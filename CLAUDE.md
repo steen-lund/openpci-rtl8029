@@ -12,7 +12,7 @@ Licensing (details in `README.md`): the driver in `src/ne2000/` is GPL-2.0-or-la
 
 ## Build
 
-Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (path is hard-coded in `makefile` as `TOOLPREFIX`). The toolchain is built from AmigaPorts/m68k-amigaos-gcc (https://github.com/AmigaPorts/m68k-amigaos-gcc).
+Cross-compiled on the host with the m68k-amigaos GCC toolchain installed at `/opt/amiga` (the makefile's `TOOLCHAIN` default; override it with `make TOOLCHAIN=<dir>`). The toolchain is built from AmigaPorts/m68k-amigaos-gcc (https://github.com/AmigaPorts/m68k-amigaos-gcc).
 
 The distribution targets need two more host tools:
 
@@ -38,6 +38,8 @@ make clean           # removes obj/ and bin/; make distclean also removes dist/
 - Besides the NDK 3.2, the build needs headers that come from the toolchain installation as well: the openpci.library SDK (Aminet `driver/other/openpci68k.lha`: `libraries/openpci.h`, `libraries/pcitags.h`, GCC `proto/`/`inline/openpci.h`), the mmu.library headers (MuManual of NDK 3.2: `mmu/*.h`, `proto/`/`inline/mmu.h`) and `devices/sana2.h`. The repository has no headers of its own beyond `src/ne2000/`; if one of these is missing, the toolchain installation is incomplete.
 - The Amiga-side tools (`client`, `s2stat`) are linked against libnix (`-noixemul`), not the toolchain's default newlib. They run on the shell's default 4 KB stack with no stack swap: their own call chains measure about 1.2 KB at most, so keep large buffers on the heap, not the stack.
 - Driver sources live in `src/ne2000/`; to add one, append its bare filename to `SRCS` in `makefile` (no directory prefix).
+
+Releases are made by the manual GitHub workflow `.github/workflows/release.yml` (Actions > Release > Run workflow, from `main`; it never runs on its own). It reads the version from `src/ne2000/rev.h`, refuses if the tag `v<version>` exists, builds `make RELEASE=1 dist` in the `amigadev/crosstools:m68k-amigaos` Docker image (pinned by digest; it installs the toolchain in `/opt/m68k-amigaos`), tags the built commit and publishes a GitHub Release with the `.adf` and `.lha` and the version's section of `src/ne2000/release_notes`. Before running it: bump `DEV_VERSION`/`DEV_REVISION` and the date in `DEV_IDSTRING`, and add the release notes section. That image built byte-identical binaries to the local toolchain when it was pinned; when replacing the digest, check that again.
 
 ## Testing
 
