@@ -159,14 +159,18 @@ $(STAGE): $(DIST_INPUTS) $(THIS_MAKEFILE)
 	cp licenses/MIT.txt $@/Licenses/MIT.txt
 	cp licenses/matay-prm-rtl8029.txt $@/Licenses/Matay-original.txt
 
-# Floppy image (volume $(ADF_VOLUME)) with the staged tree at its root. Always built from
-# scratch: replacing files inside an existing image has produced corrupt copies.
-$(DIST)/$(ADF_TARGET): $(STAGE)
+# Floppy image (volume $(ADF_VOLUME)) with the staged tree at its root, plus the disk's own
+# icon (it also sets where the disk's window opens). Always built from scratch: replacing
+# files inside an existing image has produced corrupt copies.
+DISK_ICON = src/dist/Disk.info
+
+$(DIST)/$(ADF_TARGET): $(STAGE) $(DISK_ICON)
 	@mkdir -p $(dir $@)
 	rm -f $@
 	$(XDFTOOL) $@ format $(ADF_VOLUME) \
 		$$(cd $(STAGE) && find . -mindepth 1 -type d | sort | sed 's|^\./|+ makedir |') \
-		$$(cd $(STAGE) && find . -type f | sort | sed 's|^\./\(.*\)|+ write $(STAGE)/\1 \1|')
+		$$(cd $(STAGE) && find . -type f | sort | sed 's|^\./\(.*\)|+ write $(STAGE)/\1 \1|') \
+		+ write $(DISK_ICON) Disk.info
 	$(XDFTOOL) $@ list
 
 # LhA archive with the staged tree in a $(DIST_NAME) drawer. -lh5 compression and level 1
