@@ -18,7 +18,9 @@ are new. The git history records every change and its date.
 
 ## Building
 
-See `CLAUDE.md` for the toolchain and all make targets. In short:
+See `CLAUDE.md` for the toolchain and all make targets. Besides the NDK 3.2, the toolchain must
+provide the openpci.library SDK (Aminet `driver/other/openpci68k.lha`), the mmu.library headers
+(MuManual of the NDK 3.2) and the SANA-II header `devices/sana2.h`. In short:
 
 ```bash
 make RELEASE=1 dist  # dist/openpci-rtl8029.adf and .lha: installer, driver, client, s2stat
@@ -53,7 +55,6 @@ The repository holds parts under different licenses:
 | The test and diagnostic tools, `src/Tools/` (`client`, `s2stat`, `server`) | 2025–2026 Steen Lund | MIT |
 | `src/ne2000/__divsi3.c`, `__udivsi3.c` | from libnix (bebbo/libnix) | public domain |
 | Build files and documentation | 2024–2026 Steen Lund | MIT |
-| Third-party headers, `include/` | see below | their own terms |
 
 ### The driver
 
@@ -71,15 +72,3 @@ it: do not sell the driver or include it in a commercial product.
 `client`, `s2stat` and `server` were written from scratch for this project and are separate
 programs that talk to the driver only through the SANA-II interface or the network. They
 are under the MIT license (`licenses/MIT.txt`).
-
-### Third-party headers
-
-`include/` holds headers that the cross toolchain does not ship. They are included only so
-that the project builds, and they remain under their authors' terms:
-
-- `include/libraries/`, `include/clib/openpci_protos.h`, `include/fd/openpci_lib.fd`: the
-  openpci.library SDK (Aminet `driver/other/openpci68k.lha`).
-- `include/mmu/`, `include/clib/mmu_protos.h`, `include/fd/mmu_lib.fd`: mmu.library by
-  Thomas Richter (THOR-Software), from the MuManual of NDK 3.2.
-- `include/devices/sana2.h`: the SANA-II header, (C) Amiga, Inc., from NDK 3.2.
-- `include/proto/` and `include/inline/` are generated from the `.fd` files.

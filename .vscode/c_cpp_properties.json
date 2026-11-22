@@ -3,7 +3,6 @@
         {
             "name": "Amiga",
             "includePath": [
-                "${workspaceFolder}/include",
                 "${workspaceFolder}/src/ne2000",
                 "/opt/amiga/m68k-amigaos/ndk-include/**",
                 "/opt/amiga/m68k-amigaos/include/**"
@@ -30,7 +29,6 @@
         {
             "name": "Amiga Debug",
             "includePath": [
-                "${workspaceFolder}/include",
                 "${workspaceFolder}/src/ne2000",
                 "/opt/amiga/m68k-amigaos/ndk-include/**",
                 "/opt/amiga/m68k-amigaos/include/**"

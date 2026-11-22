@@ -40,7 +40,6 @@
 #include "ne2000.h"
 
 /* mmu.library, see hw_is_cache_inhibited() */
-struct AbstractDescriptor; /* only named in a prototype in clib/mmu_protos.h */
 #include <proto/mmu.h>
 #include <mmu/context.h>
 

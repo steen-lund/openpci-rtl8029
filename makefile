@@ -38,7 +38,7 @@ ifeq ($(PERF),1)
 	DEFINES += -DPERF_TIMING=1
 endif
 
-INCLUDES = -I. -I./include -I/opt/amiga/m68k-amigaos/ndk-include -I/opt/amiga/m68k-amigaos/include
+INCLUDES = -I. -I/opt/amiga/m68k-amigaos/ndk-include -I/opt/amiga/m68k-amigaos/include
 WARNINGS = -Wall -Wwrite-strings -Werror
 # -fno-strict-aliasing: the driver moves packet data through buffers as bytes, words and longs
 CFLAGS  = -msmall-code -fno-strict-aliasing $(OPTIMIZE) $(DEBUG) $(INCLUDES) $(DEFINES) $(WARNINGS)
