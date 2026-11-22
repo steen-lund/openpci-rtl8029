@@ -20,7 +20,6 @@ XDFTOOL = xdftool
 # LHa for UNIX from the Amiga toolchain. Not plain "lha": Homebrew's lhasa installs an
 # lha command that can only extract.
 LHA     = $(dir $(TOOLPREFIX))lha
-VERSION = 2.0
 
 RELEASE = 0
 # PERF=1 builds the driver with per-packet timing counters (see PERF_TIMING in driver.c)
@@ -91,7 +90,7 @@ HOST_CC     = cc
 HOST_CFLAGS = -Wall -Wextra -O2
 SERVER_OBJS = $(HOST_OBJ)/Tools/server.o
 
-.PHONY: all driver client s2stat server adf lha dist clean distclean
+.PHONY: all driver client s2stat server adf lha dist bump clean distclean
 all: $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET)
 driver: $(AMIGA_BIN)/$(TARGET)
 client: $(AMIGA_BIN)/$(CLIENT_TARGET)
@@ -185,6 +184,10 @@ $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c $(THIS_MAKEFILE)
 $(HOST_BIN)/server: $(SERVER_OBJS) $(THIS_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(HOST_CC) -o $@ $(SERVER_OBJS)
+
+# Version and dates: make bump VERSION=2.1 [DATE=dd.mm.yyyy]; without VERSION only the dates
+bump:
+	@scripts/bump-version.sh "$(VERSION)" "$(DATE)"
 
 # Leaves dist/ alone: a built release image survives a clean
 clean:

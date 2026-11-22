@@ -87,6 +87,10 @@ jobs:
             echo "::error::No section for $VERSION in src/ne2000/release_notes"
             exit 1
           fi
+          if grep -q 'TODO' section.txt; then
+            echo "::error::The $VERSION section of src/ne2000/release_notes still has a TODO"
+            exit 1
+          fi
           # Plain text with hanging indents: keep its layout
           { echo '```'; cat section.txt; echo '```'; } > notes.md
           cat notes.md
