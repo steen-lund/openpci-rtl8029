@@ -1,4 +1,7 @@
-TOOLPREFIX = /opt/amiga/bin/m68k-amigaos-
+# Where the m68k-amigaos toolchain is installed. The release workflow builds in the
+# amigadev/crosstools image, which has it in /opt/m68k-amigaos: make TOOLCHAIN=/opt/m68k-amigaos
+TOOLCHAIN ?= /opt/amiga
+TOOLPREFIX = $(TOOLCHAIN)/bin/m68k-amigaos-
 
 # Everything built depends on this file: flags, link order and the distribution layout are
 # defined here, and make does not notice a changed command on its own.
@@ -38,7 +41,7 @@ ifeq ($(PERF),1)
 	DEFINES += -DPERF_TIMING=1
 endif
 
-INCLUDES = -I. -I/opt/amiga/m68k-amigaos/ndk-include -I/opt/amiga/m68k-amigaos/include
+INCLUDES = -I. -I$(TOOLCHAIN)/m68k-amigaos/ndk-include -I$(TOOLCHAIN)/m68k-amigaos/include
 WARNINGS = -Wall -Wwrite-strings -Werror
 # -fno-strict-aliasing: the driver moves packet data through buffers as bytes, words and longs
 CFLAGS  = -msmall-code -fno-strict-aliasing $(OPTIMIZE) $(DEBUG) $(INCLUDES) $(DEFINES) $(WARNINGS)
