@@ -121,10 +121,21 @@ prm-rtl8029.device history
 
   ADDED: Diagnostic counters through S2_GETSPECIALSTATS, including the
          card's own error tallies, collisions and the unit task's state.
-         The s2stat tool prints them.
+         The s2stat tool prints them, grouped by topic.
 
   ADDED: The unit task priority (default 6) can be set without
          rebuilding: SetEnv openpci-rtl8029.pri <n>.
 
   ADDED: Unsupported SANA-II commands are answered with
          S2ERR_NOT_SUPPORTED.
+
+  FIXED: Running the device from a Shell returns harmlessly, the ROMTag
+         reports version 2, and a failed initialisation (for example
+         without openpci.library) no longer leaks memory.
+
+  CHANGED: The installer works with openpci: it finds the card with lspci
+           from the openpci package, shows its progress, and asks before
+           reinstalling the same version.
+
+  ADDED: openpci-rtl8029.guide, an AmigaGuide covering installation, the
+         task priority setting, the test client and every s2stat counter.
