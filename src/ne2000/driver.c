@@ -578,6 +578,7 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
     struct DevData *dd;
     struct Library *SysBase = sysb;
 
+    INIT_DBG("Initializing RTL8029 device...");
     if ((dd = (struct DevData *)MakeLibrary(FuncTable, NULL, NULL, sizeof(struct DevData), 0)))
     {
         UBYTE *p;
@@ -598,7 +599,7 @@ struct DevData *DevInit(register APTR seglist reg(a0), register struct Library *
         dd->dd_SysBase = SysBase;
         if (OpenDeviceLibraries(dd))
         {
-            INIT_DBG1("Device initialized, base at $%08lx.", dd);
+            INIT_DBG1("Device loaded, base at $%08lx.", dd);
             AddDevice((struct Device *)dd);
             return dd;
         }
@@ -913,14 +914,8 @@ LONG OpenDeviceLibraries(struct DevData *dd)
 
     /* Optional: hw_is_cache_inhibited() asks it how the card's registers are mapped */
     dd->dd_MMUBase = OpenLibrary("mmu.library", 39);
-    if (dd->dd_MMUBase)
-    {
-        INIT_DBG("mmu.library opened");
-    }
-    else
-    {
+    if (!dd->dd_MMUBase)
         INIT_DBG("mmu.library not available - will use cache flush method");
-    }
 
     return TRUE;
 }
