@@ -94,7 +94,8 @@ static void run_benchmark(int fd) {
     }
     printf("  Received from client: %.0f KB/s (%.1f s)\n",
            (BENCH_BYTES / 1024.0) / (seconds_now() - t0), seconds_now() - t0);
-    write(fd, BENCH_DONE, strlen(BENCH_DONE));
+    if (write(fd, BENCH_DONE, strlen(BENCH_DONE)) != (ssize_t)strlen(BENCH_DONE))
+        printf("  Could not tell the client the benchmark is done\n");
 }
 
 void print_ip_address() {
@@ -480,7 +481,8 @@ done:
     } else {
         snprintf(response, sizeof(response), "ENDIAN-ERROR: %d values incorrect", endian_errors);
     }
-    write(client_socket_fd, response, strlen(response));
+    if (write(client_socket_fd, response, strlen(response)) != (ssize_t)strlen(response))
+        printf("Warning: could not send the endianness result to the client\n");
 
     printf("\nEndianness test (Client→Server): %s\n", endian_errors == 0 ? "PASSED" : "FAILED");
 

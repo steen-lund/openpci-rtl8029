@@ -87,7 +87,7 @@ DEPS = $(OBJS:.o=.d) $(CLIENT_OBJS:.o=.d) $(STAT_OBJS:.o=.d)
 
 # Host-side test server, built with the host compiler
 HOST_CC     = cc
-HOST_CFLAGS = -Wall -Wextra -O2
+HOST_CFLAGS = -Wall -Wextra -Werror -O2
 SERVER_OBJS = $(HOST_OBJ)/Tools/server.o
 
 .PHONY: all driver client s2stat server adf lha dist bump clean distclean
