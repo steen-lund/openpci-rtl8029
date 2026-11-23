@@ -29,6 +29,7 @@ jobs:
     # change the compiler a release is built with. amigadev/crosstools:m68k-amigaos as of
     # 2026-11-21 (GCC 16.2.1b, AmigaDev amiga16.2), amd64 image: it includes the openpci and
     # mmu SDKs, lha and xdftool, and builds the same binaries as the maintainer's toolchain.
+    # build.yml uses the same digest: update both together.
     env:
       IMAGE: amigadev/crosstools@sha256:7601e475f4a6c349fd65a3a2c8e07a9bb582e85ae6a5db478369e8125c06f156
       GH_TOKEN: ${{ github.token }}

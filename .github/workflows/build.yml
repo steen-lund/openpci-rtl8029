@@ -1,0 +1,51 @@
+# Verification build: every driver configuration, the distributions and the test server.
+# Runs on pushes and pull requests to main, or by hand (Actions > Build > Run workflow).
+# It publishes nothing; the floppy image and archive are kept as build artifacts.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    # Same image and digest as release.yml: update both together.
+    env:
+      IMAGE: amigadev/crosstools@sha256:7601e475f4a6c349fd65a3a2c8e07a9bb582e85ae6a5db478369e8125c06f156
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the driver and tools (debug, PERF=1, release) and the distributions
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work "$IMAGE" sh -c '
+            set -e
+            make TOOLCHAIN=/opt/m68k-amigaos
+            make TOOLCHAIN=/opt/m68k-amigaos RELEASE=1 PERF=1
+            make TOOLCHAIN=/opt/m68k-amigaos RELEASE=1 dist
+          '
+
+      - name: Build the test server
+        run: make server
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: openpci-rtl8029-${{ github.sha }}
+          path: |
+            dist/openpci-rtl8029.adf
+            dist/openpci-rtl8029.lha
+            dist/openpci-rtl8029.readme
+          if-no-files-found: error
