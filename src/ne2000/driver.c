@@ -897,11 +897,12 @@ LONG OpenDeviceLibraries(struct DevData *dd)
 {
     USE(SysBase)
 
-    if (!(dd->dd_UtilityBase = OpenLibrary("utility.library", 39)))
+    /* Version 37 (AmigaOS 2.04), as openpci.library: nothing newer is called */
+    if (!(dd->dd_UtilityBase = OpenLibrary("utility.library", 37)))
         return FALSE;
     if (!(dd->dd_OpenPciBase = OpenLibrary("openpci.library", 5)))
         return FALSE;
-    if (!(dd->dd_DOSBase = OpenLibrary("dos.library", 38)))
+    if (!(dd->dd_DOSBase = OpenLibrary("dos.library", 37)))
         return FALSE;
     if (OpenDevice("timer.device", UNIT_MICROHZ, (struct IORequest *)&dd->dd_Treq, 0) == 0)
     {

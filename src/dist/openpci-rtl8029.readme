@@ -3,7 +3,7 @@ Author:       Steen Lund, Grzegorz Kraszewski (original driver)
 Uploader:     steen@munk-lund.dk (Steen Lund)
 Type:         driver/net
 Version:      2.0
-Architecture: m68k-amigaos >= 3.0.0
+Architecture: m68k-amigaos >= 2.0.4
 Requires:     driver/other/openpci68k.lha
 Distribution: NoCD
 Kurz:         Treiber fuer RTL8029-PCI-Netzwerkkarten
@@ -19,8 +19,9 @@ documents the driver, client and s2stat.
 
 Requirements
 
-  AmigaOS 3.0 or later, openpci.library from the openpci package (Aminet
+  AmigaOS 2.04 or later, openpci.library from the openpci package (Aminet
   driver/other/openpci68k.lha) and a SANA-II TCP/IP stack such as Roadshow.
+  Tested on AmigaOS 3.2.
 
 Copyright and license
 
