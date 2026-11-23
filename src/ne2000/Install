@@ -2,7 +2,7 @@
 ;Grzegorz "Krashan" Kraszewski
 ;$VER: Ne2000 install 0.21 (9.9.2001)
 ;Modified 2024-2026 by Steen Lund for openpci-rtl8029.device: new file names, card
-;check with lspci from the openpci package, Polish strings removed
+;check with lspci from the openpci package, Polish strings removed, progress, reinstall
 ;SPDX-License-Identifier: GPL-2.0-or-later
 
 (complete 0)
@@ -15,6 +15,8 @@
 (set #msg_destdir "Select the directory where the driver file will be copied to.")
 (set #msg_desthelp "There is really no reason why you may want to change the default 'DEVS:Networks/' location. But you are an expert, aren't you? So do what you want, but have been warned.")
 (set #msg_copydrv "Copying driver file.")
+(set #msg_same " of the driver is already installed. Install it again?")
+(set #msg_samehelp "The driver in the destination directory has the same version as the one being installed. Answer 'Yes' to replace it anyway, for example with a rebuilt driver.")
 (set #msg_choice "Select operation.")
 (set #msg_choice0 "[2pInstall/Update")
 (set #msg_choice1 "Remove")
@@ -37,6 +39,7 @@
 (set #card (= 0 (run (cat "Search >NIL: " #lspci " 10ec:8029 QUIET") (safe))))
 (set #listed (= 0 (run (cat "Search >NIL: " #lspci " \"(rev \" QUIET") (safe))))
 (delete #lspci (safe))
+(complete 20)
 (set #operation
 	(askchoice
    	(prompt #msg_choice)
@@ -67,14 +70,37 @@
                   )
             	)
             )
+            (complete 50)
 
-            (copylib
-            	(prompt #msg_copydrv)
-               (help #msg_copydrv)
-               (confirm)
-               (source "Devs/Networks/openpci-rtl8029.device")
-               (dest #destpath)
+;copylib only replaces an installed driver with a higher version. Reinstalling the same
+;version (a rebuilt or test driver) would then silently do nothing, so ask instead.
+            (set #newdrv "Devs/Networks/openpci-rtl8029.device")
+            (set #olddrv (tackon #destpath "openpci-rtl8029.device"))
+            (set #newver (getversion #newdrv))
+            (if (and (exists #olddrv) (= #newver (getversion #olddrv)))
+               (
+                  (if (askbool
+                        (prompt (cat "Version " (/ #newver 65536) "." (BITAND #newver 65535)
+                                     #msg_same))
+                        (help #msg_samehelp)
+                        (default 1))
+                     (copyfiles
+                        (prompt #msg_copydrv)
+                        (help #msg_copydrv)
+                        (source #newdrv)
+                        (dest #destpath)
+                     )
+                  )
+               )
+               (copylib
+                  (prompt #msg_copydrv)
+                  (help #msg_copydrv)
+                  (confirm)
+                  (source #newdrv)
+                  (dest #destpath)
+               )
             )
+            (complete 100)
        	)
          (
          	(abort #msg_nocard)
@@ -92,9 +118,11 @@
             )
       	)
       )
+      (complete 50)
 
       (if (= 1 (askbool (prompt #msg_sure) (help #msg_hsure) (default 0))
       	(delete (tackon #destpath "openpci-rtl8029.device") (prompt "") (help "") (infos))
+         (complete 100)
          (set #msg_exit (cat @app-name #msg_removed #destpath #msg_removed1))
          (exit #msg_exit (quiet))
          )
