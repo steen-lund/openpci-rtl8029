@@ -5,6 +5,7 @@
 #
 # Without a version the current one is kept (to refresh the dates); without a date, today.
 # Updates the version numbers and $VER string in src/ne2000/rev.h, the guide's $VER line,
+# the Version: field of the Aminet readme (src/dist/ReadMe),
 # the end year of the "... Steen Lund" copyright lines, and the version's heading in
 # src/ne2000/release_notes, which it adds (with a TODO line to replace) if it is missing.
 #
@@ -16,6 +17,7 @@ cd "$(dirname "$0")/.."
 
 REV=src/ne2000/rev.h
 GUIDE=src/dist/openpci-rtl8029.guide
+README=src/dist/ReadMe
 NOTES=src/ne2000/release_notes
 
 version=$1
@@ -49,8 +51,9 @@ perl -pi -e '
     s/(\$VER: openpci-rtl8029\.device )\d+\.\d+ \([\d.]+\)/${1}$ENV{version} ($ENV{date})/;
 ' "$REV"
 
-# The guide's own version string
+# The guide's own version string, and the Version: field of the Aminet readme
 perl -pi -e 's/(\$VER: openpci-rtl8029\.guide )\d+\.\d+ \([\d.]+\)/${1}$ENV{version} ($ENV{date})/' "$GUIDE"
+perl -pi -e 's/^(Version:\s+)\d+\.\d+\s*$/${1}$ENV{version}\n/' "$README"
 
 # Copyright lines of this project (never Matay's): move the end year up to this year
 for f in $(git ls-files); do

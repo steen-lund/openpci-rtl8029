@@ -177,11 +177,12 @@ $(DIST)/$(ADF_TARGET): $(STAGE) $(DISK_ICON)
 # it. -lh5 compression and level 1 headers, which every Amiga LhA and lha.library reads.
 DRAWER_ICON = src/dist/$(DIST_NAME).info
 
-$(DIST)/$(LHA_TARGET): $(STAGE) $(DRAWER_ICON)
+$(DIST)/$(LHA_TARGET): $(STAGE) $(DRAWER_ICON) src/dist/ReadMe
 	@mkdir -p $(dir $@)
 	rm -f $@
 	cp $(DRAWER_ICON) $(dir $(STAGE))$(DIST_NAME).info
 	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME) $(DIST_NAME).info
+	cp src/dist/ReadMe $(DIST)/$(DIST_NAME).readme   # Aminet uploads the readme next to the archive
 	$(LHA) -l $@
 
 $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c $(THIS_MAKEFILE)

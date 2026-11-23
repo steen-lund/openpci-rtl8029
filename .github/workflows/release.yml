@@ -104,6 +104,7 @@ jobs:
           mkdir release
           cp dist/openpci-rtl8029.adf "release/openpci-rtl8029-$VERSION.adf"
           cp dist/openpci-rtl8029.lha "release/openpci-rtl8029-$VERSION.lha"
+          cp dist/openpci-rtl8029.readme "release/openpci-rtl8029-$VERSION.readme"
           flags=""
           if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
           # Creates the tag on the commit that was built
