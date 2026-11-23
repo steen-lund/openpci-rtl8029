@@ -173,12 +173,15 @@ $(DIST)/$(ADF_TARGET): $(STAGE) $(DISK_ICON)
 		+ write $(DISK_ICON) Disk.info
 	$(XDFTOOL) $@ list
 
-# LhA archive with the staged tree in a $(DIST_NAME) drawer. -lh5 compression and level 1
-# headers, which every Amiga LhA and lha.library version reads.
-$(DIST)/$(LHA_TARGET): $(STAGE)
+# LhA archive with the staged tree in a $(DIST_NAME) drawer, and the drawer's icon next to
+# it. -lh5 compression and level 1 headers, which every Amiga LhA and lha.library reads.
+DRAWER_ICON = src/dist/$(DIST_NAME).info
+
+$(DIST)/$(LHA_TARGET): $(STAGE) $(DRAWER_ICON)
 	@mkdir -p $(dir $@)
 	rm -f $@
-	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME)
+	cp $(DRAWER_ICON) $(dir $(STAGE))$(DIST_NAME).info
+	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME) $(DIST_NAME).info
 	$(LHA) -l $@
 
 $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c $(THIS_MAKEFILE)
