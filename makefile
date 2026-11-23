@@ -137,23 +137,25 @@ $(AMIGA_BIN)/$(STAT_TARGET): $(STAT_OBJS) $(CONFIG_STAMP) $(THIS_MAKEFILE)
 	$(CC) $(TOOL_CFLAGS) $(TOOL_LDFLAGS) -o $@ $(STAT_OBJS) -lm
 
 # Distribution layout, shared by the floppy image and the LhA archive: the installer, guide,
-# ReadMe and Licenses at the root, the driver in Devs/Networks and the tools in C, like the system
+# readme and Licenses at the root, the driver in Devs/Networks and the tools in C, like the system
 # directories. It is staged in obj/dist/$(DIST_NAME) and both archives are made from that tree.
 DIST_NAME  = openpci-rtl8029
 STAGE      = obj/dist/$(DIST_NAME)
 INSTALL_FILES = src/ne2000/Install src/ne2000/Install.info
 DOC_FILES   = src/dist/openpci-rtl8029.guide src/dist/openpci-rtl8029.guide.info
+# Aminet readme: same base name as the archive
+README      = src/dist/$(DIST_NAME).readme
 # The GPL requires the license and the way to the source to travel with the binaries
 DIST_LICENSES = LICENSE licenses/MIT.txt licenses/matay-prm-rtl8029.txt
 DIST_INPUTS = $(AMIGA_BIN)/$(TARGET) $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) \
-              $(INSTALL_FILES) $(DOC_FILES) src/dist/ReadMe $(DIST_LICENSES)
+              $(INSTALL_FILES) $(DOC_FILES) $(README) $(DIST_LICENSES)
 
 $(STAGE): $(DIST_INPUTS) $(THIS_MAKEFILE)
 	rm -rf $@
 	mkdir -p $@/C $@/Devs/Networks
 	cp $(AMIGA_BIN)/$(TARGET) $@/Devs/Networks/
 	cp $(AMIGA_BIN)/$(CLIENT_TARGET) $(AMIGA_BIN)/$(STAT_TARGET) $@/C/
-	cp $(INSTALL_FILES) $(DOC_FILES) src/dist/ReadMe $@/
+	cp $(INSTALL_FILES) $(DOC_FILES) $(README) $@/
 	mkdir -p $@/Licenses
 	cp LICENSE $@/Licenses/GPL-2.0.txt
 	cp licenses/MIT.txt $@/Licenses/MIT.txt
@@ -177,12 +179,12 @@ $(DIST)/$(ADF_TARGET): $(STAGE) $(DISK_ICON)
 # it. -lh5 compression and level 1 headers, which every Amiga LhA and lha.library reads.
 DRAWER_ICON = src/dist/$(DIST_NAME).info
 
-$(DIST)/$(LHA_TARGET): $(STAGE) $(DRAWER_ICON) src/dist/ReadMe
+$(DIST)/$(LHA_TARGET): $(STAGE) $(DRAWER_ICON) $(README)
 	@mkdir -p $(dir $@)
 	rm -f $@
 	cp $(DRAWER_ICON) $(dir $(STAGE))$(DIST_NAME).info
 	cd $(dir $(STAGE)) && $(LHA) -ao5q2 -1 $(abspath $@) $(DIST_NAME) $(DIST_NAME).info
-	cp src/dist/ReadMe $(DIST)/$(DIST_NAME).readme   # Aminet uploads the readme next to the archive
+	cp $(README) $(DIST)/   # Aminet expects the readme next to the archive too
 	$(LHA) -l $@
 
 $(HOST_OBJ)/Tools/%.o: src/Tools/macOS/%.c $(THIS_MAKEFILE)
