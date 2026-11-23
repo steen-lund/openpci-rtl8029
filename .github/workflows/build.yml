@@ -29,6 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # Before the Docker build: that runs as root and leaves obj/ owned by root
+      - name: Build the test server
+        run: make server
+
       - name: Build the driver and tools (debug, PERF=1, release) and the distributions
         run: |
           docker run --rm -v "$PWD:/work" -w /work "$IMAGE" sh -c '
@@ -37,9 +41,6 @@ jobs:
             make TOOLCHAIN=/opt/m68k-amigaos RELEASE=1 PERF=1
             make TOOLCHAIN=/opt/m68k-amigaos RELEASE=1 dist
           '
-
-      - name: Build the test server
-        run: make server
 
       - uses: actions/upload-artifact@v7
         with:
